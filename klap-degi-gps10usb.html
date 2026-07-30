@@ -326,13 +326,18 @@ document.getElementById('gpxBtn').onclick = async () => {
 
     gpx += `\n    </trkseg>\n  </trk>\n</gpx>`;
 
-    // --- Web Share API による共有判定と処理 ---
+    // --- ファイルとBlobの準備 ---
     const nowStr = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `KLAP_LOG_${nowStr}.gpx`;
-    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
-    const file = new File([blob], fileName, { type: 'application/gpx+xml' });
+    
+    // ポイント①: Androidで認識されやすい「text/xml」または「application/xml」を試す
+    // (gpx+xml だとAndroid OS側で弾かれるケースが多いため)
+    const mimeType = 'application/xml'; 
+    const blob = new Blob([gpx], { type: mimeType });
+    const file = new File([blob], fileName, { type: mimeType });
 
-    // Web Share API かつ ファイル共有 (canShare) が利用可能な場合
+    // ポイント②: Web Share API（ファイル共有）の試行
+    let shareSuccess = false;
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
             await navigator.share({
@@ -340,19 +345,33 @@ document.getElementById('gpxBtn').onclick = async () => {
                 text: 'KLAP DEGI Lap Log Data',
                 files: [file]
             });
-            console.log('GPX Shared successfully');
+            shareSuccess = true;
         } catch (err) {
-            // ユーザーによるキャンセル以外の場合のみフォールバックまたは警告表示
-            if (err.name !== 'AbortError') {
-                console.error('Share failed:', err);
-                showCopyOverlay(gpx);
-            }
+            // ユーザーキャンセル（AbortError）は正常終了扱い
+            if (err.name === 'AbortError') return;
+            console.warn('Share failed, falling back:', err);
         }
-    } else {
-        // Web Share API非対応（PC等）の場合は従来通りのテキストコピー画面を表示
-        showCopyOverlay(gpx);
+    }
+
+    // ポイント③: Web Share非対応 / 失敗時のフォールバック処理
+    if (!shareSuccess) {
+        // テキストコピー画面を開くか、直接ファイルとしてダウンロードさせるかの分岐
+        // スマホならダウンロードリンクを自動発火させるのが最もスムーズです
+        downloadBlob(blob, fileName);
     }
 };
+
+// ファイル直接ダウンロード用のヘルパー関数
+function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 function showCopyOverlay(gpx) {
     const ov = document.createElement('div');
