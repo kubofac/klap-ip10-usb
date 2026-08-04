@@ -113,9 +113,55 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
+// --- 内蔵GPS 切り替え処理 ---
+function toggleInternalGps() {
+    const btn = document.getElementById('intGpsBtn');
+    
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        btn.classList.remove('active');
+        btn.style.background = "#1a1a1a";
+        return;
+    }
+
+    if (!navigator.geolocation) {
+        alert("お使いの端末・ブラウザは内蔵GPS（Geolocation）に対応していません。");
+        return;
+    }
+
+    btn.classList.add('active');
+    btn.style.background = "var(--hrc-blue)";
+
+    watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+            const now = Date.now();
+            lat = pos.coords.latitude;
+            lon = pos.coords.longitude;
+            currentSpeedKmh = (pos.coords.speed || 0) * 3.6;
+
+            document.getElementById('debug_lat').textContent = lat.toFixed(6);
+            document.getElementById('debug_lon').textContent = lon.toFixed(6);
+            document.getElementById('debug_acc').textContent = Math.round(pos.coords.accuracy || 0);
+            document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
+
+            handlePositionUpdate(lat, lon, now);
+        },
+        (err) => {
+            console.error("GPS Error:", err);
+            alert("内蔵GPS取得エラー: " + err.message);
+            toggleInternalGps();
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
+        }
+    );
+}
+
 // --- バイナリパケット解析 (15 Bytes) ---
 function processBinaryPacket(view) {
-    const now = Date.now();
     if (view.byteLength >= 15 && view.getUint8(0) === 0xAA && view.getUint8(1) === 0x55) {
         const pktSpan = document.getElementById('debug_pkt');
         if (pktSpan) {
@@ -133,7 +179,7 @@ function processBinaryPacket(view) {
             lon = rawLon;
             document.getElementById('debug_lat').textContent = lat.toFixed(6);
             document.getElementById('debug_lon').textContent = lon.toFixed(6);
-            handlePositionUpdate(lat, lon, now);
+            handlePositionUpdate(lat, lon, Date.now());
         } else if (lat === 0) {
             document.getElementById('debug_lat').textContent = "SEARCH...";
             document.getElementById('debug_lon').textContent = "SEARCH...";
@@ -236,12 +282,9 @@ function processLap(hitTime, useFreeze) {
 }
 
 // --- USB Serial 通信 ---
-// --- USB Serial 通信 (修正版) ---
-// --- USB Serial 通信 (完全修正版) ---
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
 
-    // 1. Web Serial API または Polyfill のシリアルオブジェクトを取得
     let serialObj = navigator.serial;
     if (!serialObj && typeof Serial !== 'undefined') {
         serialObj = new Serial();
@@ -253,39 +296,33 @@ async function connectUsbSerial() {
     }
 
     try {
-        // 2. 代表的なUSBシリアル変換ICのVIDを指定してポート要求
         usbPort = await serialObj.requestPort({
             filters: [
                 { usbVendorId: 0x303A }, // ESP32-S2 / ESP32-S3 / ESP32-C3 (Native USB)
-                { usbVendorId: 0x10C4 }, // CP2102 / CP2104 (多くのESP32 DevKitで使用)
-                { usbVendorId: 0x1A86 }, // CH340 / CH341 (安価なESP32基板でよく使用)
-                { usbVendorId: 0x0403 }, // FTDI (FT232R等)
+                { usbVendorId: 0x10C4 }, // CP2102 / CP2104
+                { usbVendorId: 0x1A86 }, // CH340 / CH341
+                { usbVendorId: 0x0403 }, // FTDI
                 { usbVendorId: 0x2341 }  // Arduino / CDC
             ]
         });
 
-        // ポートを開く (115200 bps)
         await usbPort.open({ baudRate: 115200 });
 
-        // --- 接続成功後のUI変更 ---
         btn.classList.add('active'); 
         btn.style.background = "var(--hrc-blue)"; 
         btn.textContent = "USB FIXED";
 
-        // 3. データ受信ループ処理
         const reader = usbPort.readable.getReader();
         try {
             while (usbPort.readable) {
                 const { value, done } = await reader.read();
                 if (done) break;
                 if (value) {
-                    // バッファに新データを追加
                     let newBuf = new Uint8Array(usbRxBuffer.length + value.length);
                     newBuf.set(usbRxBuffer, 0);
                     newBuf.set(value, usbRxBuffer.length);
                     usbRxBuffer = newBuf;
 
-                    // 15バイト以上のデータがあればヘッダー (0xAA, 0x55) を探して解析
                     while (usbRxBuffer.length >= 15) {
                         if (usbRxBuffer[0] === 0xAA && usbRxBuffer[1] === 0x55) {
                             let packet = usbRxBuffer.slice(0, 15);
@@ -293,7 +330,6 @@ async function connectUsbSerial() {
                             const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
                             processBinaryPacket(view);
                         } else {
-                            // ヘッダーが合わない場合は1バイトずつシフトして同期合わせ
                             usbRxBuffer = usbRxBuffer.slice(1);
                         }
                     }
@@ -305,14 +341,12 @@ async function connectUsbSerial() {
 
     } catch (e) {
         if (e.name === 'NotFoundError') {
-            // ユーザーが選択キャンセルした場合
             console.log("USBデバイス選択がキャンセルされました。");
         } else {
             console.error("USB Access Error:", e);
             alert("USB接続エラー: " + e.message);
         }
     } finally {
-        // 切断時のUI復元処理
         btn.classList.remove('active');
         btn.style.background = "#1a1a1a";
         btn.textContent = "USB START";
@@ -337,7 +371,6 @@ document.getElementById('gpxBtn').onclick = function() {
         }
     }
 
-    // 1. ローカルストレージから各種コントロールラインデータを取得してLINE_DATAフォーマットを構築
     const getL = (k) => {
         const p1Lat = localStorage.getItem(k + 'P1Lat');
         const p1Lon = localStorage.getItem(k + 'P1Lon');
@@ -348,7 +381,6 @@ document.getElementById('gpxBtn').onclick = function() {
 
     const lineData = `SL:${getL('startLine')}|S1:${getL('s1Line')}|S2:${getL('s2Line')}|S3:${getL('s3Line')}`;
 
-    // 2. GPXヘッダー（独自メタデータ入り）の作成
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
     gpx += `<gpx version="1.1" creator="KLAP_DEGI_LAPTIMER" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">\n`;
     gpx += `  <metadata>\n`;
@@ -359,11 +391,10 @@ document.getElementById('gpxBtn').onclick = function() {
     gpx += `    <name>Track_Log</name>\n`;
     gpx += `    <trkseg>`;
 
-    // 3. トラックポイントの書き出し (m/s換算速度およびRPM/TEMP情報)
     gpsPoints.forEach(p => {
         const timeISO = new Date(p.time).toISOString();
         const speedVal = (typeof p.speed === 'number' && !isNaN(p.speed)) ? p.speed : 0;
-        const speedMS = (speedVal / 3.6).toFixed(2); // km/h -> m/s 変換
+        const speedMS = (speedVal / 3.6).toFixed(2);
         const rpmVal = Math.round(p.rpm || 0);
 
         gpx += `\n      <trkpt lat="${p.lat}" lon="${p.lon}">`;
@@ -379,7 +410,6 @@ document.getElementById('gpxBtn').onclick = function() {
 
     gpx += `\n    </trkseg>\n  </trk>\n</gpx>`;
 
-    // 4. ファイル名の生成 (タイムスタンプ付与)
     const now = new Date();
     const dateStr = now.getFullYear() +
         ('0' + (now.getMonth() + 1)).slice(-2) +
@@ -388,7 +418,6 @@ document.getElementById('gpxBtn').onclick = function() {
         ('0' + now.getMinutes()).slice(-2);
     const fileName = `KLAP_LOG_${dateStr}.gpx`;
 
-    // 5. Blob生成とダウンロード処理 (ブラウザ標準)
     const blob = new Blob([gpx], { type: 'application/gpx+xml;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -402,7 +431,6 @@ document.getElementById('gpxBtn').onclick = function() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    // UI上のフィードバック（ボタン明滅）
     this.style.opacity = "0.5";
     setTimeout(() => { this.style.opacity = "1"; }, 1000);
 };
