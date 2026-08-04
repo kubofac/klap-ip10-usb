@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <script src="https://cdn.jsdelivr.net/npm/webusb-serial-polyfill@1.0.15/dist/serial.js"></script>
     <title>KLAP DEGI V5.3 - DIRECT GPX DOWNLOAD (V12.8 Specification)</title>
 <style>
     :root { --hrc-red: #E4002B; --hrc-blue: #004098; --hrc-white: #ffffff; --bg-dark: #000000; --hrc-orange: #FFA500; }
@@ -86,6 +87,9 @@
 </div>
 
 <script>
+if (!('serial' in navigator) && !('usb' in navigator)) { 
+    console.warn("Web Serial / WebUSB 非対応環境です。内蔵GPSのみ使用可能です。");
+}
 'use strict';
 let swState = 0, startTime = 0, lapStartTime = 0, lapRecords = [], gpsPoints = [];
 let lat = 0, lon = 0, currentRPM = 0, currentTemp = 0, currentSpeedKmh = 0, maxSpeedInLap = 0, maxRpmInLap = 0;
@@ -234,7 +238,12 @@ function processLap(hitTime, useFreeze) {
 // --- USB Serial 通信 ---
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
-    if (!('serial' in navigator)) { alert("Web Serial API非対応のブラウザです。(Chrome等を使用してください)"); return; }
+    
+    // PolyfillまたはNativeのいずれにも非対応かチェック
+    if (!('serial' in navigator) && !('usb' in navigator)) { 
+        alert("お使いの環境・ブラウザは USB 通信（Web Serial / WebUSB）に対応していません。"); 
+        return; 
+    }
     try {
         usbPort = await navigator.serial.requestPort();
         await usbPort.open({ baudRate: 115200 });
