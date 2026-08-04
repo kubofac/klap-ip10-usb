@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>KLAP DEGI V5.1 - HYBRID PRO (USB Serial)</title>
+    <title>KLAP DEGI V5.3 - DIRECT GPX DOWNLOAD (V12.8 Specification)</title>
 <style>
     :root { --hrc-red: #E4002B; --hrc-blue: #004098; --hrc-white: #ffffff; --bg-dark: #000000; --hrc-orange: #FFA500; }
     body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: var(--bg-dark); color: var(--hrc-white); font-family: 'Arial Black', sans-serif; overflow: hidden; position: fixed; }
     #dashboard { position: relative; display: flex; flex-direction: column; height: 100dvh; width: 100vw; padding-top: env(safe-area-inset-top); }
     #canvas { position: absolute; top: 0; left: 0; width: 100% !important; height: calc(100% - 60px) !important; z-index: 1; }
-    #debug-overlay { position: absolute; left: 10px; bottom: 65px; font-family: monospace; font-size: 10px; color: rgba(255, 255, 255, 0.4); z-index: 100; pointer-events: none; }
+    #debug-overlay { position: absolute; left: 10px; bottom: 65px; font-family: monospace; font-size: 10px; color: rgba(255, 255, 255, 0.6); z-index: 100; pointer-events: none; }
     
     .main-ui-container { position: absolute; right: 10px; top: 65px; bottom: 65px; display: flex; flex-direction: row; align-items: flex-start; gap: 20px; z-index: 20; pointer-events: none; }
     #info-overlay { display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 5px; margin-top: 50px;}
@@ -45,7 +45,7 @@
 
 <div id="dashboard">
     <canvas id="canvas"></canvas>
-    <div id="debug-overlay">LAT:<span id="debug_lat">0.000</span> LON:<span id="debug_lon">0.000</span> ACC:<span id="debug_acc">0</span> PKT:<span id="debug_pkt">0</span></div>
+    <div id="debug-overlay">LAT:<span id="debug_lat">SEARCH...</span> LON:<span id="debug_lon">SEARCH...</span> ACC:<span id="debug_acc">0</span> PKT:<span id="debug_pkt">0</span></div>
     <div class="main-ui-container">
         <div id="info-overlay">
             <div id="rpm_val">0</div>
@@ -67,13 +67,13 @@
         </div>
     </div>
     <footer>
-        <button id="intGpsBtn">INT GPS</button>
-        <button id="usbConnect">USB CONNECT</button>
-        <button id="startBtn">TIMER</button>
-        <button id="lapBtn">LAP/RESET</button>
-        <button id="historyBtn">HISTORY</button>
-        <button id="gpxBtn" style="display:none; background:var(--hrc-orange); color:#000;">GPX SAVE</button>
-        <button id="reloadBtn" onclick="location.reload()">RELOAD</button>
+        <button type="button" id="intGpsBtn">INT GPS</button>
+        <button type="button" id="usbConnect">USB START</button>
+        <button type="button" id="startBtn">TIMER</button>
+        <button type="button" id="lapBtn">LAP/RESET</button>
+        <button type="button" id="historyBtn">HISTORY</button>
+        <button type="button" id="gpxBtn">GPX SAVE</button>
+        <button type="button" id="reloadBtn" onclick="location.reload()">RELOAD</button>
     </footer>
 </div>
 
@@ -90,65 +90,121 @@
 let swState = 0, startTime = 0, lapStartTime = 0, lapRecords = [], gpsPoints = [];
 let lat = 0, lon = 0, currentRPM = 0, currentTemp = 0, currentSpeedKmh = 0, maxSpeedInLap = 0, maxRpmInLap = 0;
 let lastPos = null, isFrozen = false, freezeDisplayTime = "", freezeUntil = 0;
-let sectorClearTimer = null, lastDataTimestamp = 0, watchdogTimer = null;
+let sectorClearTimer = null;
 const FREEZE_MS = 15000, SECTOR_CLEAR_MS = 3000;
 let displayedRPM = 0;
 let lines = { startLine: null, s1Line: null, s2Line: null, s3Line: null };
 let validDirection = null, sectorDirections = { s1: null, s2: null, s3: null };
 let s1_abs = 0, s2_abs = 0, s3_abs = 0, lastPassedSectorTime = 0, watchId = null;
 let pulsePerRev = 1, cooldownMs = 15000;
-let serialPort = null, serialReader = null;
+let usbPort = null, usbRxBuffer = new Uint8Array(0);
+
 const canvas = document.getElementById('canvas'), ctx = canvas.getContext('2d');
 
+function resizeCanvas() {
+    if (canvas.clientWidth && canvas.clientHeight) {
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+    }
+}
+window.addEventListener('resize', resizeCanvas);
+
+// --- バイナリパケット解析 (15 Bytes) ---
+function processBinaryPacket(view) {
+    const now = Date.now();
+    if (view.byteLength >= 15 && view.getUint8(0) === 0xAA && view.getUint8(1) === 0x55) {
+        const pktSpan = document.getElementById('debug_pkt');
+        if (pktSpan) {
+            pktSpan.textContent = parseInt(pktSpan.textContent || 0) + 1;
+        }
+
+        const rawLat = view.getInt32(2, true) / 1000000.0;
+        const rawLon = view.getInt32(6, true) / 1000000.0;
+        const rawSpeed = view.getUint16(10, true);
+        const rawTemp = view.getUint8(12);
+        const hz = view.getUint16(13, true);
+
+        if (Math.abs(rawLat) > 0.0001 && Math.abs(rawLon) > 0.0001) {
+            lat = rawLat;
+            lon = rawLon;
+            document.getElementById('debug_lat').textContent = lat.toFixed(6);
+            document.getElementById('debug_lon').textContent = lon.toFixed(6);
+            handlePositionUpdate(lat, lon, now);
+        } else if (lat === 0) {
+            document.getElementById('debug_lat').textContent = "SEARCH...";
+            document.getElementById('debug_lon').textContent = "SEARCH...";
+        }
+
+        currentSpeedKmh = rawSpeed;
+        if (rawTemp > 0) currentTemp = rawTemp;
+        
+        currentRPM = (hz * 60) / (pulsePerRev || 1);
+
+        document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
+        document.getElementById('temp_val').textContent = currentTemp > 0 ? currentTemp : '--';
+        document.getElementById('rpm_val').textContent = Math.floor(currentRPM);
+    }
+}
+
+// 位置情報更新ハンドラ
 function handlePositionUpdate(currLat, currLon, now) {
+    if (!currLat || !currLon || Math.abs(currLat) < 0.0001 || Math.abs(currLon) < 0.0001) return;
+
+    const cur = { 
+        lat: currLat, 
+        lon: currLon, 
+        time: now, 
+        rpm: currentRPM, 
+        speed: currentSpeedKmh, 
+        temp: currentTemp 
+    };
+
     if (swState === 1) {
         if (currentSpeedKmh > maxSpeedInLap) maxSpeedInLap = currentSpeedKmh;
         if (currentRPM > maxRpmInLap) maxRpmInLap = currentRPM;
 
-        // GPS有効時のみログを追加
-        if (currLat !== 0 || currLon !== 0) {
-            const cur = { 
-                lat: currLat, 
-                lon: currLon, 
-                time: now, 
-                rpm: currentRPM, 
-                speed: currentSpeedKmh, 
-                temp: currentTemp 
-            };
-            gpsPoints.push(cur);
+        gpsPoints.push(cur);
 
-            if (lastPos) {
-                const hitSL = getIntersection(lastPos, cur, lines.startLine);
-                if (hitSL) {
-                    if (validDirection === null) validDirection = hitSL.dir;
-                    if (hitSL.dir === validDirection && (hitSL.time - (lapStartTime || startTime) > cooldownMs)) {
-                        processLap(hitSL.time, true); 
-                    }
+        if (lastPos) {
+            const hitSL = getIntersection(lastPos, cur, lines.startLine);
+            if (hitSL) {
+                if (validDirection === null) validDirection = hitSL.dir;
+                if (hitSL.dir === validDirection && (hitSL.time - (lapStartTime || startTime) > cooldownMs)) {
+                    processLap(hitSL.time, true); 
                 }
+            }
 
-                ['s1', 's2', 's3'].forEach(s => {
-                    const hit = getIntersection(lastPos, cur, lines[s + 'Line']);
-                    if (hit) {
-                        if (sectorDirections[s] === null) sectorDirections[s] = hit.dir;
-                        if (hit.dir === sectorDirections[s]) {
-                            const absT = (hit.time - lapStartTime) / 1000;
-                            if (s === 's1' && s1_abs === 0) { 
-                                s1_abs = absT; lastPassedSectorTime = absT; 
-                                document.getElementById('s1_val').textContent = s1_abs.toFixed(3); 
-                            }
-                            else if (s === 's2' && s2_abs === 0) { 
-                                s2_abs = absT; lastPassedSectorTime = absT; 
-                                document.getElementById('s2_val').textContent = (s1_abs > 0 ? (s2_abs-s1_abs) : s2_abs).toFixed(3); 
-                            }
-                            else if (s === 's3' && s3_abs === 0) { 
-                                s3_abs = absT; lastPassedSectorTime = absT; 
-                                document.getElementById('s3_val').textContent = (s2_abs > 0 ? (s3_abs-s2_abs) : (s1_abs > 0 ? s3_abs-s1_abs : s3_abs)).toFixed(3); 
-                            }
+            ['s1', 's2', 's3'].forEach(s => {
+                const hit = getIntersection(lastPos, cur, lines[s + 'Line']);
+                if (hit) {
+                    if (sectorDirections[s] === null) sectorDirections[s] = hit.dir;
+                    if (hit.dir === sectorDirections[s]) {
+                        const absT = (hit.time - lapStartTime) / 1000;
+                        if (s === 's1' && s1_abs === 0) { 
+                            s1_abs = absT; 
+                            lastPassedSectorTime = absT; 
+                            document.getElementById('s1_val').textContent = s1_abs.toFixed(3); 
+                        }
+                        else if (s === 's2' && s2_abs === 0) { 
+                            s2_abs = absT; 
+                            lastPassedSectorTime = absT; 
+                            document.getElementById('s2_val').textContent = (s1_abs > 0 ? (s2_abs-s1_abs) : s2_abs).toFixed(3); 
+                        }
+                        else if (s === 's3' && s3_abs === 0) { 
+                            s3_abs = absT; 
+                            lastPassedSectorTime = absT; 
+                            document.getElementById('s3_val').textContent = (s2_abs > 0 ? (s3_abs-s2_abs) : (s1_abs > 0 ? s3_abs-s1_abs : s3_abs)).toFixed(3); 
                         }
                     }
-                });
-            }
-            lastPos = cur;
+                }
+            });
+        }
+        lastPos = cur;
+    } else {
+        if (gpsPoints.length === 0) {
+            gpsPoints.push(cur);
+        } else {
+            gpsPoints[gpsPoints.length - 1] = cur;
         }
     }
 }
@@ -175,127 +231,126 @@ function processLap(hitTime, useFreeze) {
     lapStartTime = hitTime; maxSpeedInLap = 0; maxRpmInLap = 0; s1_abs = 0; s2_abs = 0; s3_abs = 0; lastPassedSectorTime = 0;
 }
 
-// Web Serial API (USBシリアル)
-async function connectUsb() {
+// --- USB Serial 通信 ---
+async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
-    if (!('serial' in navigator)) {
-        alert("Web Serial APIに非対応のブラウザです。Android Chrome等をご使用ください。");
-        return;
-    }
+    if (!('serial' in navigator)) { alert("Web Serial API非対応のブラウザです。(Chrome等を使用してください)"); return; }
     try {
-        serialPort = await navigator.serial.requestPort();
-        await serialPort.open({ baudRate: 115200 });
-        btn.classList.add('active');
-        btn.style.background = "var(--hrc-blue)";
-        btn.textContent = "USB FIXED";
-        if (!watchdogTimer) startWatchdog();
-        readUsbData();
-    } catch (err) {
-        console.error("USB Error:", err);
-        btn.style.background = "var(--hrc-orange)";
-        btn.textContent = "USB RETRY";
-    }
-}
-
-async function readUsbData() {
-    let buffer = new Uint8Array(0);
-    while (serialPort && serialPort.readable) {
+        usbPort = await navigator.serial.requestPort();
+        await usbPort.open({ baudRate: 115200 });
+        btn.classList.add('active'); btn.style.background = "var(--hrc-blue)"; btn.textContent = "USB FIXED";
+        
+        const reader = usbPort.readable.getReader();
         try {
-            serialReader = serialPort.readable.getReader();
-            while (true) {
-                const { value, done } = await serialReader.read();
+            while (usbPort.readable) {
+                const { value, done } = await reader.read();
                 if (done) break;
                 if (value) {
-                    let newBuffer = new Uint8Array(buffer.length + value.length);
-                    newBuffer.set(buffer, 0);
-                    newBuffer.set(value, buffer.length);
-                    buffer = newBuffer;
+                    let newBuf = new Uint8Array(usbRxBuffer.length + value.length);
+                    newBuf.set(usbRxBuffer, 0);
+                    newBuf.set(value, usbRxBuffer.length);
+                    usbRxBuffer = newBuf;
 
-                    while (buffer.length >= 13) {
-                        const packet = buffer.slice(0, 13);
-                        buffer = buffer.slice(13);
-                        parseUsbPacket(packet);
+                    while (usbRxBuffer.length >= 15) {
+                        if (usbRxBuffer[0] === 0xAA && usbRxBuffer[1] === 0x55) {
+                            let packet = usbRxBuffer.slice(0, 15);
+                            usbRxBuffer = usbRxBuffer.slice(15);
+                            const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+                            processBinaryPacket(view);
+                        } else {
+                            usbRxBuffer = usbRxBuffer.slice(1);
+                        }
                     }
                 }
             }
-        } catch (error) {
-            console.error("Read Error:", error);
-            break;
         } finally {
-            if (serialReader) serialReader.releaseLock();
+            reader.releaseLock();
         }
+    } catch (e) {
+        console.error(e);
+    } finally {
+        btn.classList.remove('active');
+        btn.style.background = "#1a1a1a";
+        btn.textContent = "USB START";
     }
 }
 
-function parseUsbPacket(packet) {
-    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
-    const now = Date.now();
-    lastDataTimestamp = now;
-
-    lat = view.getInt32(0, true) / 10000000.0;
-    lon = view.getInt32(4, true) / 10000000.0;
-    currentSpeedKmh = view.getUint16(8, true);
-    currentTemp = view.getUint8(10);
-    const hz = view.getUint16(11, true);
-    currentRPM = (hz * 60) / (pulsePerRev || 1);
-
-    document.getElementById('debug_lat').textContent = lat.toFixed(6);
-    document.getElementById('debug_lon').textContent = lon.toFixed(6);
-    document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
-    document.getElementById('temp_val').textContent = currentTemp;
-    document.getElementById('rpm_val').textContent = Math.floor(currentRPM);
-
-    handlePositionUpdate(lat, lon, now);
-
-    const pktSpan = document.getElementById('debug_pkt');
-    if (pktSpan) {
-        pktSpan.textContent = parseInt(pktSpan.textContent || 0) + 1;
-    }
-}
-
-function startWatchdog() {
-    watchdogTimer = setInterval(() => {
-        const now = Date.now();
-        const btn = document.getElementById('usbConnect');
-        if (lastDataTimestamp > 0 && (now - lastDataTimestamp > 3000)) {
-            btn.style.background = "var(--hrc-orange)"; btn.textContent = "NO DATA";
-        }
-    }, 2000);
-}
-
-// GPS (内蔵)
+// 内蔵GPS処理
 async function toggleInternalGps() {
     const btn = document.getElementById('intGpsBtn');
     if (watchId !== null) { 
         navigator.geolocation.clearWatch(watchId); 
         watchId = null; 
-        btn.classList.remove('active'); btn.textContent = "INT GPS"; btn.style.background = "#1a1a1a";
+        btn.classList.remove('active'); 
+        btn.textContent = "INT GPS"; 
+        btn.style.background = "#1a1a1a";
         return; 
     }
-    btn.classList.add('active'); btn.textContent = "WAIT GPS...";
+
+    if (!navigator.geolocation) {
+        alert("Geolocation非対応環境です");
+        return;
+    }
+
+    btn.classList.add('active'); 
+    btn.textContent = "WAIT GPS...";
     
     watchId = navigator.geolocation.watchPosition(pos => {
         const now = Date.now();
-        const lat_val = pos.coords.latitude;
-        const lon_val = pos.coords.longitude;
-        const acc = pos.coords.accuracy;
-        document.getElementById('debug_lat').textContent = lat_val.toFixed(6);
-        document.getElementById('debug_lon').textContent = lon_val.toFixed(6);
-        document.getElementById('debug_acc').textContent = Math.round(acc);
-        if (acc < 20) { btn.style.background = "var(--hrc-red)"; btn.textContent = "GPS FIXED"; }
-        else { btn.style.background = "var(--hrc-orange)"; btn.textContent = "LOW ACC"; }
-        currentSpeedKmh = pos.coords.speed ? pos.coords.speed * 3.6 : 0;
-        handlePositionUpdate(lat_val, lon_val, now);
+        const lat_val = pos.coords ? pos.coords.latitude : 0;
+        const lon_val = pos.coords ? pos.coords.longitude : 0;
+        const acc = pos.coords ? pos.coords.accuracy : 0;
+        
+        if (lat_val && lon_val && Math.abs(lat_val) > 0.0001) {
+            document.getElementById('debug_acc').textContent = Math.round(acc || 0);
+            
+            if (acc < 20) { 
+                btn.style.background = "var(--hrc-red)"; 
+                btn.textContent = "GPS FIXED"; 
+            } else { 
+                btn.style.background = "var(--hrc-orange)"; 
+                btn.textContent = "LOW ACC"; 
+            }
+            
+            if (pos.coords.speed !== null && pos.coords.speed !== undefined && !isNaN(pos.coords.speed)) {
+                currentSpeedKmh = pos.coords.speed * 3.6;
+                document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
+            }
+            
+            lat = lat_val;
+            lon = lon_val;
+            document.getElementById('debug_lat').textContent = lat.toFixed(6);
+            document.getElementById('debug_lon').textContent = lon.toFixed(6);
+            handlePositionUpdate(lat_val, lon_val, now);
+        }
     }, e => {
-        alert("GPSエラー: " + e.message);
-        btn.classList.remove('active'); watchId = null;
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+        console.warn("GPS Warning/Error:", e.message);
+    }, { 
+        enableHighAccuracy: true, 
+        maximumAge: 0, 
+        timeout: 20000 
+    });
 }
 
-// GPX SAVE
-document.getElementById('gpxBtn').onclick = async () => {
-    if (gpsPoints.length === 0) return;
+// --- V12.8仕様 GPX生成および保存処理 ---
+document.getElementById('gpxBtn').onclick = function() {
+    if (gpsPoints.length === 0) {
+        if (lat !== 0 && lon !== 0) {
+            gpsPoints.push({
+                lat: lat,
+                lon: lon,
+                time: Date.now(),
+                rpm: currentRPM,
+                speed: currentSpeedKmh,
+                temp: currentTemp
+            });
+        } else {
+            alert("位置情報が受信できていません。GPSを受信してから再度お試しください。");
+            return;
+        }
+    }
 
+    // 1. ローカルストレージから各種コントロールラインデータを取得してLINE_DATAフォーマットを構築
     const getL = (k) => {
         const p1Lat = localStorage.getItem(k + 'P1Lat');
         const p1Lon = localStorage.getItem(k + 'P1Lon');
@@ -306,59 +361,68 @@ document.getElementById('gpxBtn').onclick = async () => {
 
     const lineData = `SL:${getL('startLine')}|S1:${getL('s1Line')}|S2:${getL('s2Line')}|S3:${getL('s3Line')}`;
 
+    // 2. GPXヘッダー（独自メタデータ入り）の作成
     let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    gpx += `<gpx version="1.1" creator="KLAP_DEGI" xmlns="http://www.topografix.com/GPX/1/1">\n`;
-    gpx += `  <metadata>\n    <desc>LINE_DATA[${lineData}]</desc>\n  </metadata>\n`;
-    gpx += `  <trk>\n    <name>Log_${new Date().toLocaleString()}</name>\n    <trkseg>`;
+    gpx += `<gpx version="1.1" creator="KLAP_DEGI_LAPTIMER" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">\n`;
+    gpx += `  <metadata>\n`;
+    gpx += `    <name>KLAP Session ${new Date().toLocaleString()}</name>\n`;
+    gpx += `    <desc>LINE_DATA[${lineData}]</desc>\n`;
+    gpx += `  </metadata>\n`;
+    gpx += `  <trk>\n`;
+    gpx += `    <name>Track_Log</name>\n`;
+    gpx += `    <trkseg>`;
 
+    // 3. トラックポイントの書き出し (m/s換算速度およびRPM/TEMP情報)
     gpsPoints.forEach(p => {
         const timeISO = new Date(p.time).toISOString();
-        const speedMS = (p.speed / 3.6).toFixed(2); 
+        const speedVal = (typeof p.speed === 'number' && !isNaN(p.speed)) ? p.speed : 0;
+        const speedMS = (speedVal / 3.6).toFixed(2); // km/h -> m/s 変換
+        const rpmVal = Math.round(p.rpm || 0);
 
         gpx += `\n      <trkpt lat="${p.lat}" lon="${p.lon}">`;
         gpx += `<time>${timeISO}</time>`;
-        gpx += `<speed>${speedMS}</speed>`; 
         gpx += `<extensions>`;
-        gpx += `<rpm>${Math.round(p.rpm)}</rpm>`;
         gpx += `<speed>${speedMS}</speed>`;
-        gpx += `<temp>${p.temp}</temp>`;
-        gpx += `<gpxtpx:TrackPointExtension><gpxtpx:hr>${Math.round(p.rpm)}</gpxtpx:hr></gpxtpx:TrackPointExtension>`;
+        gpx += `<rpm>${rpmVal}</rpm>`;
+        gpx += `<temp>${p.temp || 0}</temp>`;
+        gpx += `<gpxtpx:TrackPointExtension><gpxtpx:hr>${rpmVal}</gpxtpx:hr></gpxtpx:TrackPointExtension>`;
         gpx += `</extensions>`;
         gpx += `</trkpt>`;
     });
 
     gpx += `\n    </trkseg>\n  </trk>\n</gpx>`;
 
-    const nowStr = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `KLAP_LOG_${nowStr}.gpx`;
-    const mimeType = 'application/xml'; 
-    const blob = new Blob([gpx], { type: mimeType });
-    const file = new File([blob], fileName, { type: mimeType });
+    // 4. ファイル名の生成 (タイムスタンプ付与)
+    const now = new Date();
+    const dateStr = now.getFullYear() +
+        ('0' + (now.getMonth() + 1)).slice(-2) +
+        ('0' + now.getDate()).slice(-2) + '_' +
+        ('0' + now.getHours()).slice(-2) +
+        ('0' + now.getMinutes()).slice(-2);
+    const fileName = `KLAP_LOG_${dateStr}.gpx`;
 
-    let shareSuccess = false;
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-            await navigator.share({ title: 'KLAP GPX Data', text: 'KLAP DEGI Lap Log', files: [file] });
-            shareSuccess = true;
-        } catch (err) {
-            if (err.name === 'AbortError') return;
-        }
-    }
+    // 5. Blob生成とダウンロード処理 (ブラウザ標準)
+    const blob = new Blob([gpx], { type: 'application/gpx+xml;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', fileName);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
-    if (!shareSuccess) downloadBlob(blob, fileName);
+    // UI上のフィードバック（ボタン明滅）
+    this.style.opacity = "0.5";
+    setTimeout(() => { this.style.opacity = "1"; }, 1000);
 };
 
-function downloadBlob(blob, fileName) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
-
 function getIntersection(p1, p2, line) {
-    if (!line) return null;
-    const x1 = p1.lon, y1 = p1.lat, x2 = p2.lon, y2 = p2.lat, x3 = line.p1.lon, y3 = line.p1.lat, x4 = line.p2.lon, y4 = line.p2.lon;
+    if (!line || !line.p1 || !line.p2) return null;
+    const x1 = p1.lon, y1 = p1.lat, x2 = p2.lon, y2 = p2.lat, x3 = line.p1.lon, y3 = line.p1.lat, x4 = line.p2.lon, y4 = line.p2.lat;
     const den = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
     if (Math.abs(den) < 1e-12) return null;
     const t = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / den, u = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / den;
@@ -366,7 +430,7 @@ function getIntersection(p1, p2, line) {
     return null;
 }
 
-function timeFormat(ms){ if(ms<0) ms=0; const m=Math.floor(ms/60000), s=Math.floor((ms%60000)/1000), ms2=Math.floor(ms%1000); return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}.${ms2.toString().padStart(3,'0')}`; }
+function timeFormat(ms){ if(ms<0 || isNaN(ms)) ms=0; const m=Math.floor(ms/60000), s=Math.floor((ms%60000)/1000), ms2=Math.floor(ms%1000); return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}.${ms2.toString().padStart(3,'0')}`; }
 
 function updateLapList() {
     const lapContainer = document.getElementById('lap');
@@ -389,7 +453,8 @@ function mainLoop() {
         }
     }
 
-    const w = canvas.width = canvas.clientWidth, h = canvas.height = canvas.clientHeight;
+    const w = canvas.width;
+    const h = canvas.height;
     if (w > 0 && h > 0) {
         ctx.clearRect(0, 0, w, h);
         
@@ -415,12 +480,16 @@ function mainLoop() {
                 ang = 1.5 * Math.PI; 
             }
             
-            let barColor = "#222";
+            let barColor = "#222"; 
             if (i < active) {
                 const barRpmAtThisPoint = (i / segments) * maxRpmScale;
-                if (barRpmAtThisPoint >= 10500) barColor = "#E4002B";
-                else if (barRpmAtThisPoint >= 6000) barColor = "#004098";
-                else barColor = "#FFFFFF";
+                if (barRpmAtThisPoint >= 10500) {
+                    barColor = "#E4002B";
+                } else if (barRpmAtThisPoint >= 6000) {
+                    barColor = "#004098";
+                } else {
+                    barColor = "#FFFFFF";
+                }
             }
             
             ctx.fillStyle = barColor;
@@ -448,17 +517,21 @@ function mainLoop() {
     requestAnimationFrame(mainLoop);
 }
 
+// イベントリスナー
 document.getElementById('intGpsBtn').onclick = toggleInternalGps;
-document.getElementById('usbConnect').onclick = connectUsb;
+document.getElementById('usbConnect').onclick = connectUsbSerial;
+
 document.getElementById('startBtn').onclick = function() {
     if (swState !== 1) {
         swState = 1; startTime = Date.now(); lapStartTime = 0; lapRecords = []; gpsPoints = []; lastPos = null; validDirection = null;
-        this.classList.add('active'); document.getElementById('gpxBtn').style.display = 'none';
+        this.classList.add('active');
     } else {
-        swState = 2; this.classList.remove('active'); if (gpsPoints.length > 0) document.getElementById('gpxBtn').style.display = 'block';
+        swState = 2; this.classList.remove('active');
     }
 };
+
 document.getElementById('lapBtn').onclick = () => { if (swState === 1) processLap(Date.now(), false); else if (confirm("RESET?")) location.reload(); };
+
 document.getElementById('historyBtn').onclick = () => {
     if (lapRecords.length === 0) return;
     const getB = (k) => { const vs = lapRecords.map(r => parseFloat(r[k])).filter(v => !isNaN(v)); return vs.length > 0 ? Math.min(...vs) : null; };
@@ -471,10 +544,18 @@ document.getElementById('historyBtn').onclick = () => {
 };
 
 window.onload = () => {
+    resizeCanvas();
     ['startLine', 's1Line', 's2Line', 's3Line'].forEach(key => {
         const p1Lat = localStorage.getItem(key + 'P1Lat');
-        if (p1Lat) {
-            lines[key] = { p1: { lat: parseFloat(p1Lat), lon: parseFloat(localStorage.getItem(key + 'P1Lon')) }, p2: { lat: parseFloat(localStorage.getItem(key + 'P2Lat')), lon: parseFloat(localStorage.getItem(key + 'P2Lon')) } };
+        const p1Lon = localStorage.getItem(key + 'P1Lon');
+        const p2Lat = localStorage.getItem(key + 'P2Lat');
+        const p2Lon = localStorage.getItem(key + 'P2Lon');
+        
+        if (p1Lat && p1Lon && p2Lat && p2Lon) {
+            lines[key] = { 
+                p1: { lat: parseFloat(p1Lat), lon: parseFloat(p1Lon) }, 
+                p2: { lat: parseFloat(p2Lat), lon: parseFloat(p2Lon) } 
+            };
             const box = document.getElementById(key.replace('Line', '') + '_box'); if (box) box.style.display = 'block';
         }
     });
@@ -482,6 +563,14 @@ window.onload = () => {
     cooldownMs = parseInt(localStorage.getItem('lapCoolDownTime')) || 15000;
     mainLoop();
 };
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+            .then(reg => console.log('SW Registered!', reg))
+            .catch(err => console.log('SW Register Failed!', err));
+    });
+}
 </script>
 </body>
 </html>
