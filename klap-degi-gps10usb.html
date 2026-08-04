@@ -245,7 +245,7 @@ async function connectUsbSerial() {
         return; 
     }
     try {
-        usbPort = await navigator.serial.requestPort();
+      usbPort = await navigator.serial.requestPort({});
         await usbPort.open({ baudRate: 115200 });
         btn.classList.add('active'); btn.style.background = "var(--hrc-blue)"; btn.textContent = "USB FIXED";
         
