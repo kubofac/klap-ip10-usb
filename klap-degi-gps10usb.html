@@ -237,6 +237,7 @@ function processLap(hitTime, useFreeze) {
 
 // --- USB Serial 通信 ---
 // --- USB Serial 通信 (修正版) ---
+// --- USB Serial 通信 (完全修正版) ---
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
 
@@ -266,79 +267,56 @@ async function connectUsbSerial() {
         // ポートを開く (115200 bps)
         await usbPort.open({ baudRate: 115200 });
 
-        // --- 接続成功後の処理 ---
+        // --- 接続成功後のUI変更 ---
         btn.classList.add('active'); 
         btn.style.background = "var(--hrc-blue)"; 
         btn.textContent = "USB FIXED";
 
-        // 受信ループ処理へ...
+        // 3. データ受信ループ処理
+        const reader = usbPort.readable.getReader();
+        try {
+            while (usbPort.readable) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                    // バッファに新データを追加
+                    let newBuf = new Uint8Array(usbRxBuffer.length + value.length);
+                    newBuf.set(usbRxBuffer, 0);
+                    newBuf.set(value, usbRxBuffer.length);
+                    usbRxBuffer = newBuf;
+
+                    // 15バイト以上のデータがあればヘッダー (0xAA, 0x55) を探して解析
+                    while (usbRxBuffer.length >= 15) {
+                        if (usbRxBuffer[0] === 0xAA && usbRxBuffer[1] === 0x55) {
+                            let packet = usbRxBuffer.slice(0, 15);
+                            usbRxBuffer = usbRxBuffer.slice(15);
+                            const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+                            processBinaryPacket(view);
+                        } else {
+                            // ヘッダーが合わない場合は1バイトずつシフトして同期合わせ
+                            usbRxBuffer = usbRxBuffer.slice(1);
+                        }
+                    }
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
 
     } catch (e) {
         if (e.name === 'NotFoundError') {
-            // ユーザーが選択キャンセルした場合（エラー表示を出さずに終了）
+            // ユーザーが選択キャンセルした場合
             console.log("USBデバイス選択がキャンセルされました。");
         } else {
             console.error("USB Access Error:", e);
             alert("USB接続エラー: " + e.message);
         }
-    }
-}
-
-// 内蔵GPS処理
-async function toggleInternalGps() {
-    const btn = document.getElementById('intGpsBtn');
-    if (watchId !== null) { 
-        navigator.geolocation.clearWatch(watchId); 
-        watchId = null; 
-        btn.classList.remove('active'); 
-        btn.textContent = "INT GPS"; 
+    } finally {
+        // 切断時のUI復元処理
+        btn.classList.remove('active');
         btn.style.background = "#1a1a1a";
-        return; 
+        btn.textContent = "USB START";
     }
-
-    if (!navigator.geolocation) {
-        alert("Geolocation非対応環境です");
-        return;
-    }
-
-    btn.classList.add('active'); 
-    btn.textContent = "WAIT GPS...";
-    
-    watchId = navigator.geolocation.watchPosition(pos => {
-        const now = Date.now();
-        const lat_val = pos.coords ? pos.coords.latitude : 0;
-        const lon_val = pos.coords ? pos.coords.longitude : 0;
-        const acc = pos.coords ? pos.coords.accuracy : 0;
-        
-        if (lat_val && lon_val && Math.abs(lat_val) > 0.0001) {
-            document.getElementById('debug_acc').textContent = Math.round(acc || 0);
-            
-            if (acc < 20) { 
-                btn.style.background = "var(--hrc-red)"; 
-                btn.textContent = "GPS FIXED"; 
-            } else { 
-                btn.style.background = "var(--hrc-orange)"; 
-                btn.textContent = "LOW ACC"; 
-            }
-            
-            if (pos.coords.speed !== null && pos.coords.speed !== undefined && !isNaN(pos.coords.speed)) {
-                currentSpeedKmh = pos.coords.speed * 3.6;
-                document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
-            }
-            
-            lat = lat_val;
-            lon = lon_val;
-            document.getElementById('debug_lat').textContent = lat.toFixed(6);
-            document.getElementById('debug_lon').textContent = lon.toFixed(6);
-            handlePositionUpdate(lat_val, lon_val, now);
-        }
-    }, e => {
-        console.warn("GPS Warning/Error:", e.message);
-    }, { 
-        enableHighAccuracy: true, 
-        maximumAge: 0, 
-        timeout: 20000 
-    });
 }
 
 // --- V12.8仕様 GPX生成および保存処理 ---
