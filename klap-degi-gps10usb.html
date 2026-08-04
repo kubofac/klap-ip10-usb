@@ -3,44 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <script src="https://cdn.jsdelivr.net/npm/webusb-serial-polyfill@1.0.15/dist/serial.js"></script>
-    <title>KLAP DEGI V5.3 - DIRECT GPX DOWNLOAD (V12.8 Specification)</title>
-<style>
-    :root { --hrc-red: #E4002B; --hrc-blue: #004098; --hrc-white: #ffffff; --bg-dark: #000000; --hrc-orange: #FFA500; }
-    body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: var(--bg-dark); color: var(--hrc-white); font-family: 'Arial Black', sans-serif; overflow: hidden; position: fixed; }
-    #dashboard { position: relative; display: flex; flex-direction: column; height: 100dvh; width: 100vw; padding-top: env(safe-area-inset-top); }
-    #canvas { position: absolute; top: 0; left: 0; width: 100% !important; height: calc(100% - 60px) !important; z-index: 1; }
-    #debug-overlay { position: absolute; left: 10px; bottom: 65px; font-family: monospace; font-size: 10px; color: rgba(255, 255, 255, 0.6); z-index: 100; pointer-events: none; }
-    
-    .main-ui-container { position: absolute; right: 10px; top: 65px; bottom: 65px; display: flex; flex-direction: row; align-items: flex-start; gap: 20px; z-index: 20; pointer-events: none; }
-    #info-overlay { display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 5px; margin-top: 50px;}
-    #rpm_val { font-size: 11vh; font-weight: 900; line-height: 0.8; text-shadow: 3px 3px 10px #000; }
-    #display1 { font-size: 15vh; font-weight: 900; line-height: 0.9; text-shadow: 4px 4px 15px #000; white-space: nowrap; transition: color 0.2s; }
-    #sector-container { display: flex; justify-content: flex-end; gap: 10px; font-size: 4vh; font-weight: 900; height: 4.5vh; margin-top: 5px; }
-    .sec-box { display: none; text-shadow: 2px 2px 8px #000; color: #fff; }
-    #display { font-size: 2.5vh; opacity: 0.8; margin-top: 5px; }
-    
-    .right-panels { display: flex; flex-direction: row; gap: 15px; height: 100%; align-items: flex-start; pointer-events: auto;}
-    #lap-panel { width: 140px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-    #lap { flex: 1; overflow-y: auto; scrollbar-width: none; }
-    .lap-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 15px; font-weight: 900; }
-    .best-lap { color: var(--hrc-red) !important; }
-    
-    .data-panel { display: flex; flex-direction: column; gap: 10px; width: 95px; align-items: flex-end; }
-    .data-box { display: flex; flex-direction: column; align-items: flex-end; width: 100%; }
-    .label { font-size: 10px; color: var(--hrc-red); font-weight: bold; text-align: right; }
-    .val { font-size: 32px; font-weight: 900; line-height: 0.9; text-align: right; }
+    <title>KLAP DEGI V5.3 - ANDROID WEBUSB & REALTIME DELTA FIXED</title>
+    <!-- Android WebUSB (WebUSB Serial Polyfill) -->
+    <script src="https://unpkg.com/webusb-serial-polyfill/dist/serial.js"></script>
+    <style>
+        :root { --hrc-red: #E4002B; --hrc-blue: #004098; --hrc-white: #ffffff; --bg-dark: #000000; --hrc-orange: #FFA500; --hrc-green: #00FF44; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: var(--bg-dark); color: var(--hrc-white); font-family: 'Arial Black', sans-serif; overflow: hidden; position: fixed; }
+        #dashboard { position: relative; display: flex; flex-direction: column; height: 100dvh; width: 100vw; padding-top: env(safe-area-inset-top); }
+        #canvas { position: absolute; top: 0; left: 0; width: 100% !important; height: calc(100% - 60px) !important; z-index: 1; }
+        #debug-overlay { position: absolute; left: 10px; bottom: 65px; font-family: monospace; font-size: 10px; color: rgba(255, 255, 255, 0.6); z-index: 100; pointer-events: none; }
+        
+        .main-ui-container { position: absolute; right: 10px; top: 65px; bottom: 65px; display: flex; flex-direction: row; align-items: flex-start; gap: 20px; z-index: 20; pointer-events: none; }
+        #info-overlay { display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 2px; margin-top: 20px;}
+        #rpm_val { font-size: 9vh; font-weight: 900; line-height: 0.8; text-shadow: 3px 3px 10px #000; }
+        #display1 { font-size: 12vh; font-weight: 900; line-height: 0.9; text-shadow: 4px 4px 15px #000; white-space: nowrap; transition: color 0.2s; }
+        
+        /* Predictive Delta 表示スタイル */
+        #delta-box { font-size: 5vh; font-weight: 900; text-shadow: 2px 2px 8px #000; line-height: 1.0; margin-top: 4px; font-family: monospace; }
+        .delta-plus { color: var(--hrc-red) !important; }   /* 遅い (+赤) */
+        .delta-minus { color: var(--hrc-green) !important; } /* 速い (-緑) */
+        .delta-none { color: #666 !important; }
 
-    #history-page { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 2000; padding: 20px; box-sizing: border-box; overflow-y: auto; }
-    #history-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 15px; }
-    #history-table th { color: var(--hrc-red); border-bottom: 2px solid var(--hrc-red); padding: 8px; }
-    #history-table td { padding: 8px; border-bottom: 1px solid #333; text-align: center; }
-    .close-btn { background: var(--hrc-red); color: white; padding: 15px; text-align: center; font-weight: bold; border-radius: 4px; cursor: pointer; }
-    
-    footer { height: 55px; display: flex; gap: 2px; padding: 3px; background: #000; border-top: 1px solid #333; z-index: 1000; position: fixed; bottom: 0; left: 0; right: 0; padding-bottom: env(safe-area-inset-bottom); }
-    button { flex: 1; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 8px; font-weight: bold; cursor: pointer; }
-    button.active { background: var(--hrc-red) !important; border: 1px solid #fff; }
-</style>
+        #sector-container { display: flex; justify-content: flex-end; gap: 10px; font-size: 3.5vh; font-weight: 900; height: 4vh; margin-top: 2px; }
+        .sec-box { display: none; text-shadow: 2px 2px 8px #000; color: #fff; }
+        #display { font-size: 2.2vh; opacity: 0.8; margin-top: 2px; }
+        
+        .right-panels { display: flex; flex-direction: row; gap: 15px; height: 100%; align-items: flex-start; pointer-events: auto;}
+        #lap-panel { width: 140px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+        #lap { flex: 1; overflow-y: auto; scrollbar-width: none; }
+        .lap-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 15px; font-weight: 900; }
+        .best-lap { color: var(--hrc-red) !important; }
+        
+        .data-panel { display: flex; flex-direction: column; gap: 10px; width: 95px; align-items: flex-end; }
+        .data-box { display: flex; flex-direction: column; align-items: flex-end; width: 100%; }
+        .label { font-size: 10px; color: var(--hrc-red); font-weight: bold; text-align: right; }
+        .val { font-size: 32px; font-weight: 900; line-height: 0.9; text-align: right; }
+
+        #history-page { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 2000; padding: 20px; box-sizing: border-box; overflow-y: auto; }
+        #history-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 15px; }
+        #history-table th { color: var(--hrc-red); border-bottom: 2px solid var(--hrc-red); padding: 8px; }
+        #history-table td { padding: 8px; border-bottom: 1px solid #333; text-align: center; }
+        .close-btn { background: var(--hrc-red); color: white; padding: 15px; text-align: center; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        
+        footer { height: 55px; display: flex; gap: 2px; padding: 3px; background: #000; border-top: 1px solid #333; z-index: 1000; position: fixed; bottom: 0; left: 0; right: 0; padding-bottom: env(safe-area-inset-bottom); }
+        button { flex: 1; background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 8px; font-weight: bold; cursor: pointer; }
+        button.active { background: var(--hrc-red) !important; border: 1px solid #fff; }
+    </style>
 </head>
 <body>
 
@@ -51,6 +59,8 @@
         <div id="info-overlay">
             <div id="rpm_val">0</div>
             <div id="display1">00:00.000</div>
+            <!-- Predictive Delta リアルタイム表示エリア -->
+            <div id="delta-box" class="delta-none">DELTA --.--</div>
             <div id="sector-container">
                 <div id="s1_box" class="sec-box">S1: <span id="s1_val">--.---</span></div>
                 <div id="s2_box" class="sec-box">S2: <span id="s2_val">--.---</span></div>
@@ -87,10 +97,10 @@
 </div>
 
 <script>
-if (!('serial' in navigator) && !('usb' in navigator)) { 
-    console.warn("Web Serial / WebUSB 非対応環境です。内蔵GPSのみ使用可能です。");
-}
 'use strict';
+
+const serialApi = window.serial || (navigator.serial ? navigator.serial : null);
+
 let swState = 0, startTime = 0, lapStartTime = 0, lapRecords = [], gpsPoints = [];
 let lat = 0, lon = 0, currentRPM = 0, currentTemp = 0, currentSpeedKmh = 0, maxSpeedInLap = 0, maxRpmInLap = 0;
 let lastPos = null, isFrozen = false, freezeDisplayTime = "", freezeUntil = 0;
@@ -103,6 +113,11 @@ let s1_abs = 0, s2_abs = 0, s3_abs = 0, lastPassedSectorTime = 0, watchId = null
 let pulsePerRev = 1, cooldownMs = 15000;
 let usbPort = null, usbRxBuffer = new Uint8Array(0);
 
+// --- Predictive Delta用 データ保持変数 ---
+let currentLapPoints = []; // 現在のラップの軌跡 [{lat, lon, offsetMs}]
+let bestLapPoints = [];    // ベストラップの軌跡データ
+let bestLapTimeMs = Infinity;
+
 const canvas = document.getElementById('canvas'), ctx = canvas.getContext('2d');
 
 function resizeCanvas() {
@@ -113,64 +128,18 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-// --- 内蔵GPS 切り替え処理 ---
-function toggleInternalGps() {
-    const btn = document.getElementById('intGpsBtn');
-    
-    if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-        btn.classList.remove('active');
-        btn.style.background = "#1a1a1a";
-        return;
-    }
-
-    if (!navigator.geolocation) {
-        alert("お使いの端末・ブラウザは内蔵GPS（Geolocation）に対応していません。");
-        return;
-    }
-
-    btn.classList.add('active');
-    btn.style.background = "var(--hrc-blue)";
-
-    watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-            const now = Date.now();
-            lat = pos.coords.latitude;
-            lon = pos.coords.longitude;
-            currentSpeedKmh = (pos.coords.speed || 0) * 3.6;
-
-            document.getElementById('debug_lat').textContent = lat.toFixed(6);
-            document.getElementById('debug_lon').textContent = lon.toFixed(6);
-            document.getElementById('debug_acc').textContent = Math.round(pos.coords.accuracy || 0);
-            document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
-
-            handlePositionUpdate(lat, lon, now);
-        },
-        (err) => {
-            console.error("GPS Error:", err);
-            alert("内蔵GPS取得エラー: " + err.message);
-            toggleInternalGps();
-        },
-        {
-            enableHighAccuracy: true,
-            maximumAge: 0,
-            timeout: 10000
-        }
-    );
-}
-
-// --- バイナリパケット解析 (15 Bytes) ---
+// バイナリパケット解析 (15 Bytes)
 function processBinaryPacket(view) {
+    const now = Date.now();
     if (view.byteLength >= 15 && view.getUint8(0) === 0xAA && view.getUint8(1) === 0x55) {
         const pktSpan = document.getElementById('debug_pkt');
         if (pktSpan) {
             pktSpan.textContent = parseInt(pktSpan.textContent || 0) + 1;
         }
 
-        const rawLat = view.getInt32(2, true) / 1000000.0;
-        const rawLon = view.getInt32(6, true) / 1000000.0;
-        const rawSpeed = view.getUint16(10, true);
+        const rawLat = view.getInt32(2, true) / 10000000.0;
+        const rawLon = view.getInt32(6, true) / 10000000.0;
+        const rawSpeed = view.getUint16(10, true) / 10.0;
         const rawTemp = view.getUint8(12);
         const hz = view.getUint16(13, true);
 
@@ -179,7 +148,7 @@ function processBinaryPacket(view) {
             lon = rawLon;
             document.getElementById('debug_lat').textContent = lat.toFixed(6);
             document.getElementById('debug_lon').textContent = lon.toFixed(6);
-            handlePositionUpdate(lat, lon, Date.now());
+            handlePositionUpdate(lat, lon, now);
         } else if (lat === 0) {
             document.getElementById('debug_lat').textContent = "SEARCH...";
             document.getElementById('debug_lon').textContent = "SEARCH...";
@@ -215,6 +184,13 @@ function handlePositionUpdate(currLat, currLon, now) {
 
         gpsPoints.push(cur);
 
+        // 現在のラップの軌跡データ（lat, lon, 経過ミリ秒）を追加記録
+        const currentElapsedMs = now - (lapStartTime || startTime);
+        currentLapPoints.push({ lat: currLat, lon: currLon, offsetMs: currentElapsedMs });
+
+        // リアルタイムDelta更新関数の呼び出し
+        updatePredictiveDelta(currLat, currLon, currentElapsedMs);
+
         if (lastPos) {
             const hitSL = getIntersection(lastPos, cur, lines.startLine);
             if (hitSL) {
@@ -229,7 +205,7 @@ function handlePositionUpdate(currLat, currLon, now) {
                 if (hit) {
                     if (sectorDirections[s] === null) sectorDirections[s] = hit.dir;
                     if (hit.dir === sectorDirections[s]) {
-                        const absT = (hit.time - lapStartTime) / 1000;
+                        const absT = (hit.time - (lapStartTime || startTime)) / 1000;
                         if (s === 's1' && s1_abs === 0) { 
                             s1_abs = absT; 
                             lastPassedSectorTime = absT; 
@@ -259,6 +235,50 @@ function handlePositionUpdate(currLat, currLon, now) {
     }
 }
 
+// ★ Predictive Delta リアルタイム計算ロジック（修正済）
+function updatePredictiveDelta(cLat, cLon, cElapsedMs) {
+    const deltaEl = document.getElementById('delta-box');
+    
+    // ベストラップログが存在しない場合は非表示
+    if (!bestLapPoints || bestLapPoints.length === 0) {
+        deltaEl.textContent = "DELTA --.--";
+        deltaEl.className = "delta-none";
+        return;
+    }
+
+    // 現在地とベストラップ内のすべての地点との二乗距離を全探索
+    let minDistSq = Infinity;
+    let matchedPoint = null;
+
+    for (let i = 0; i < bestLapPoints.length; i++) {
+        const pt = bestLapPoints[i];
+        const dLat = pt.lat - cLat;
+        const dLon = pt.lon - cLon;
+        const distSq = (dLat * dLat) + (dLon * dLon);
+
+        if (distSq < minDistSq) {
+            minDistSq = distSq;
+            matchedPoint = pt;
+        }
+    }
+
+    // 許容範囲（約15〜20m以内）のマッチング点が見つかった場合
+    if (matchedPoint && minDistSq < 0.0000005) {
+        const deltaMs = cElapsedMs - matchedPoint.offsetMs;
+        const deltaSec = (Math.abs(deltaMs) / 1000).toFixed(3);
+
+        if (deltaMs > 0) {
+            // 遅い：赤 (+表記)
+            deltaEl.textContent = `DELTA +${deltaSec}`;
+            deltaEl.className = "delta-plus";
+        } else {
+            // 速い：緑 (-表記)
+            deltaEl.textContent = `DELTA -${deltaSec}`;
+            deltaEl.className = "delta-minus";
+        }
+    }
+}
+
 function processLap(hitTime, useFreeze) {
     const lapTimeMs = hitTime - (lapStartTime || startTime);
     const s4 = lastPassedSectorTime > 0 ? ((lapTimeMs/1000) - lastPassedSectorTime).toFixed(3) : "--.---";
@@ -268,6 +288,14 @@ function processLap(hitTime, useFreeze) {
         s3: document.getElementById('s3_val').textContent, s4: s4 
     };
     lapRecords.unshift(lapData);
+
+    // ベストラップ更新判定＆走行ログの保存（Predictive Delta基準用）
+    if (lapTimeMs < bestLapTimeMs) {
+        bestLapTimeMs = lapTimeMs;
+        // 現在のラップの座標ログをディープコピーして基準データ化
+        bestLapPoints = JSON.parse(JSON.stringify(currentLapPoints));
+    }
+
     updateLapList();
     if (useFreeze) { 
         isFrozen = true; 
@@ -278,34 +306,39 @@ function processLap(hitTime, useFreeze) {
             ['s1_val', 's2_val', 's3_val'].forEach(id => document.getElementById(id).textContent = "--.---");
         }, SECTOR_CLEAR_MS);
     }
-    lapStartTime = hitTime; maxSpeedInLap = 0; maxRpmInLap = 0; s1_abs = 0; s2_abs = 0; s3_abs = 0; lastPassedSectorTime = 0;
+    
+    // ラップ初期化
+    lapStartTime = hitTime; 
+    maxSpeedInLap = 0; 
+    maxRpmInLap = 0; 
+    s1_abs = 0; 
+    s2_abs = 0; 
+    s3_abs = 0; 
+    lastPassedSectorTime = 0;
+    currentLapPoints = []; // 現在ラップログのリセット
 }
 
-// --- USB Serial 通信 ---
-// --- USB Serial 通信 (フィルターなし全ポート表示版) ---
+// Android WebUSB Serial 接続処理
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
-
-    let serialObj = navigator.serial;
-    if (!serialObj && typeof Serial !== 'undefined') {
-        serialObj = new Serial();
+    if (!serialApi) { 
+        alert("Web Serial / WebUSB API非対応ブラウザです。"); 
+        return; 
     }
-
-    if (!serialObj) {
-        alert("お使いのブラウザ・環境では WebUSB / Serial に対応していません。(HTTPS環境で開いているか確認してください)");
-        return;
-    }
-
+    
     try {
-        // カッコ内を空にすることで、フィルターを外してすべてのポートをダイアログに表示
-        usbPort = await serialObj.requestPort();
-
+        usbPort = await serialApi.requestPort({
+            filters: [
+                { usbVendorId: 0x10C4 }, { usbVendorId: 0x1A86 },
+                { usbVendorId: 0x0403 }, { usbVendorId: 0x303A },
+                { usbVendorId: 0x2341 }, { usbVendorId: 0x2E8A }, { usbVendorId: 0x067B }
+            ]
+        });
         await usbPort.open({ baudRate: 115200 });
-
         btn.classList.add('active'); 
         btn.style.background = "var(--hrc-blue)"; 
         btn.textContent = "USB FIXED";
-
+        
         const reader = usbPort.readable.getReader();
         try {
             while (usbPort.readable) {
@@ -332,15 +365,8 @@ async function connectUsbSerial() {
         } finally {
             reader.releaseLock();
         }
-
     } catch (e) {
-        // ポート選択ダイアログで「キャンセル」を押した場合や画面外をタップして閉じた場合
-        if (e.name === 'NotFoundError' || e.message.includes('No port selected')) {
-            console.log("USBデバイスの選択がキャンセルされました。");
-        } else {
-            console.error("USB Access Error:", e);
-            alert("USB接続エラー: " + e.message);
-        }
+        console.error("USB Serial Connection Error:", e);
     } finally {
         btn.classList.remove('active');
         btn.style.background = "#1a1a1a";
@@ -348,7 +374,64 @@ async function connectUsbSerial() {
     }
 }
 
-// --- V12.8仕様 GPX生成および保存処理 ---
+// 内蔵GPS処理
+async function toggleInternalGps() {
+    const btn = document.getElementById('intGpsBtn');
+    if (watchId !== null) { 
+        navigator.geolocation.clearWatch(watchId); 
+        watchId = null; 
+        btn.classList.remove('active'); 
+        btn.textContent = "INT GPS"; 
+        btn.style.background = "#1a1a1a";
+        return; 
+    }
+
+    if (!navigator.geolocation) {
+        alert("Geolocation非対応環境です");
+        return;
+    }
+
+    btn.classList.add('active'); 
+    btn.textContent = "WAIT GPS...";
+    
+    watchId = navigator.geolocation.watchPosition(pos => {
+        const now = Date.now();
+        const lat_val = pos.coords ? pos.coords.latitude : 0;
+        const lon_val = pos.coords ? pos.coords.longitude : 0;
+        const acc = pos.coords ? pos.coords.accuracy : 0;
+        
+        if (lat_val && lon_val && Math.abs(lat_val) > 0.0001) {
+            document.getElementById('debug_acc').textContent = Math.round(acc || 0);
+            
+            if (acc < 20) { 
+                btn.style.background = "var(--hrc-red)"; 
+                btn.textContent = "GPS FIXED"; 
+            } else { 
+                btn.style.background = "var(--hrc-orange)"; 
+                btn.textContent = "LOW ACC"; 
+            }
+            
+            if (pos.coords.speed !== null && pos.coords.speed !== undefined && !isNaN(pos.coords.speed)) {
+                currentSpeedKmh = pos.coords.speed * 3.6;
+                document.getElementById('speed_val').textContent = Math.round(currentSpeedKmh);
+            }
+            
+            lat = lat_val;
+            lon = lon_val;
+            document.getElementById('debug_lat').textContent = lat.toFixed(6);
+            document.getElementById('debug_lon').textContent = lon.toFixed(6);
+            handlePositionUpdate(lat_val, lon_val, now);
+        }
+    }, e => {
+        console.warn("GPS Warning/Error:", e.message);
+    }, { 
+        enableHighAccuracy: true, 
+        maximumAge: 0, 
+        timeout: 20000 
+    });
+}
+
+// GPX生成および保存処理
 document.getElementById('gpxBtn').onclick = function() {
     if (gpsPoints.length === 0) {
         if (lat !== 0 && lon !== 0) {
@@ -453,13 +536,19 @@ function mainLoop() {
     const now = Date.now();
 
     if (swState === 1) {
+        const elapsed = now - (lapStartTime || startTime);
         document.getElementById('display').textContent = "TOTAL " + timeFormat(now - startTime);
         const d1 = document.getElementById('display1');
         if (isFrozen && now < freezeUntil) { 
             d1.textContent = freezeDisplayTime; 
         } else { 
             isFrozen = false; 
-            d1.textContent = timeFormat(now - (lapStartTime || startTime)); 
+            d1.textContent = timeFormat(elapsed); 
+        }
+
+        // 走行中かつ最新のGPS位置がある場合、メインループ側でもリアルタイムDelta描画を更新
+        if (lat !== 0 && lon !== 0) {
+            updatePredictiveDelta(lat, lon, elapsed);
         }
     }
 
@@ -527,13 +616,16 @@ function mainLoop() {
     requestAnimationFrame(mainLoop);
 }
 
-// イベントリスナー
+// イベントリスナー設定
 document.getElementById('intGpsBtn').onclick = toggleInternalGps;
 document.getElementById('usbConnect').onclick = connectUsbSerial;
 
 document.getElementById('startBtn').onclick = function() {
     if (swState !== 1) {
         swState = 1; startTime = Date.now(); lapStartTime = 0; lapRecords = []; gpsPoints = []; lastPos = null; validDirection = null;
+        currentLapPoints = []; bestLapPoints = []; bestLapTimeMs = Infinity;
+        document.getElementById('delta-box').textContent = "DELTA --.--";
+        document.getElementById('delta-box').className = "delta-none";
         this.classList.add('active');
     } else {
         swState = 2; this.classList.remove('active');
