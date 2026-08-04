@@ -240,73 +240,47 @@ function processLap(hitTime, useFreeze) {
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
 
-    // 1. Polyfillのシリアルオブジェクト確保
+    // 1. Web Serial API または Polyfill のシリアルオブジェクトを取得
     let serialObj = navigator.serial;
     if (!serialObj && typeof Serial !== 'undefined') {
         serialObj = new Serial();
     }
 
-    if (!serialObj) { 
-        alert("お使いの環境・ブラウザは USB 通信に対応していません。(HTTPS環境で開いているか確認してください)"); 
-        return; 
+    if (!serialObj) {
+        alert("お使いのブラウザ・環境では WebUSB / Serial に対応していません。(HTTPS環境で開いているか確認してください)");
+        return;
     }
 
-    // 2. 代表的なUSBシリアル変換チップのVID（Vendor ID）リスト
-    // ESP32-S2/S3/C3 (0x303A), FTDI (0x0403), CP210x (0x10C4), CH340 (0x1A86), Arduino/CDC (0x2341)
-    const requestOptions = {
-        filters: [
-            { usbVendorId: 0x303A }, // Expressif (ESP32-S2/S3/C3/Native USB)
-            { usbVendorId: 0x0403 }, // FTDI (FT232R / FT232H など)
-            { usbVendorId: 0x10C4 }, // Silicon Labs (CP2102 / CP2104 など)
-            { usbVendorId: 0x1A86 }, // QinHeng (CH340 / CH341 など)
-            { usbVendorId: 0x2341 }, // Arduino
-            { usbVendorId: 0x03EB }, // Atmel
-            { usbVendorId: 0x2e8a }  // Raspberry Pi (Pico)
-        ]
-    };
-
     try {
-        // フィルタを指定してポート要求
-        usbPort = await serialObj.requestPort(requestOptions);
+        // 2. 代表的なUSBシリアル変換ICのVIDを指定してポート要求
+        usbPort = await serialObj.requestPort({
+            filters: [
+                { usbVendorId: 0x303A }, // ESP32-S2 / ESP32-S3 / ESP32-C3 (Native USB)
+                { usbVendorId: 0x10C4 }, // CP2102 / CP2104 (多くのESP32 DevKitで使用)
+                { usbVendorId: 0x1A86 }, // CH340 / CH341 (安価なESP32基板でよく使用)
+                { usbVendorId: 0x0403 }, // FTDI (FT232R等)
+                { usbVendorId: 0x2341 }  // Arduino / CDC
+            ]
+        });
+
+        // ポートを開く (115200 bps)
         await usbPort.open({ baudRate: 115200 });
 
+        // --- 接続成功後の処理 ---
         btn.classList.add('active'); 
         btn.style.background = "var(--hrc-blue)"; 
         btn.textContent = "USB FIXED";
 
-        const reader = usbPort.readable.getReader();
-        try {
-            while (usbPort.readable) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                if (value) {
-                    let newBuf = new Uint8Array(usbRxBuffer.length + value.length);
-                    newBuf.set(usbRxBuffer, 0);
-                    newBuf.set(value, usbRxBuffer.length);
-                    usbRxBuffer = newBuf;
+        // 受信ループ処理へ...
 
-                    while (usbRxBuffer.length >= 15) {
-                        if (usbRxBuffer[0] === 0xAA && usbRxBuffer[1] === 0x55) {
-                            let packet = usbRxBuffer.slice(0, 15);
-                            usbRxBuffer = usbRxBuffer.slice(15);
-                            const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
-                            processBinaryPacket(view);
-                        } else {
-                            usbRxBuffer = usbRxBuffer.slice(1);
-                        }
-                    }
-                }
-            }
-        } finally {
-            reader.releaseLock();
-        }
     } catch (e) {
-        console.error("USB Access Error:", e);
-        alert("USB接続エラー: " + e.message);
-    } finally {
-        btn.classList.remove('active');
-        btn.style.background = "#1a1a1a";
-        btn.textContent = "USB START";
+        if (e.name === 'NotFoundError') {
+            // ユーザーが選択キャンセルした場合（エラー表示を出さずに終了）
+            console.log("USBデバイス選択がキャンセルされました。");
+        } else {
+            console.error("USB Access Error:", e);
+            alert("USB接続エラー: " + e.message);
+        }
     }
 }
 
