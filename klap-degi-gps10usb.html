@@ -236,19 +236,44 @@ function processLap(hitTime, useFreeze) {
 }
 
 // --- USB Serial 通信 ---
+// --- USB Serial 通信 (修正版) ---
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
-    
-    // PolyfillまたはNativeのいずれにも非対応かチェック
-    if (!('serial' in navigator) && !('usb' in navigator)) { 
-        alert("お使いの環境・ブラウザは USB 通信（Web Serial / WebUSB）に対応していません。"); 
+
+    // 1. Polyfillのシリアルオブジェクト確保
+    let serialObj = navigator.serial;
+    if (!serialObj && typeof Serial !== 'undefined') {
+        serialObj = new Serial();
+    }
+
+    if (!serialObj) { 
+        alert("お使いの環境・ブラウザは USB 通信に対応していません。(HTTPS環境で開いているか確認してください)"); 
         return; 
     }
+
+    // 2. 代表的なUSBシリアル変換チップのVID（Vendor ID）リスト
+    // ESP32-S2/S3/C3 (0x303A), FTDI (0x0403), CP210x (0x10C4), CH340 (0x1A86), Arduino/CDC (0x2341)
+    const requestOptions = {
+        filters: [
+            { usbVendorId: 0x303A }, // Expressif (ESP32-S2/S3/C3/Native USB)
+            { usbVendorId: 0x0403 }, // FTDI (FT232R / FT232H など)
+            { usbVendorId: 0x10C4 }, // Silicon Labs (CP2102 / CP2104 など)
+            { usbVendorId: 0x1A86 }, // QinHeng (CH340 / CH341 など)
+            { usbVendorId: 0x2341 }, // Arduino
+            { usbVendorId: 0x03EB }, // Atmel
+            { usbVendorId: 0x2e8a }  // Raspberry Pi (Pico)
+        ]
+    };
+
     try {
-      usbPort = await navigator.serial.requestPort({});
+        // フィルタを指定してポート要求
+        usbPort = await serialObj.requestPort(requestOptions);
         await usbPort.open({ baudRate: 115200 });
-        btn.classList.add('active'); btn.style.background = "var(--hrc-blue)"; btn.textContent = "USB FIXED";
-        
+
+        btn.classList.add('active'); 
+        btn.style.background = "var(--hrc-blue)"; 
+        btn.textContent = "USB FIXED";
+
         const reader = usbPort.readable.getReader();
         try {
             while (usbPort.readable) {
@@ -276,7 +301,8 @@ async function connectUsbSerial() {
             reader.releaseLock();
         }
     } catch (e) {
-        console.error(e);
+        console.error("USB Access Error:", e);
+        alert("USB接続エラー: " + e.message);
     } finally {
         btn.classList.remove('active');
         btn.style.background = "#1a1a1a";
