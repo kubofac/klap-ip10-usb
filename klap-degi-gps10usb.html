@@ -282,6 +282,7 @@ function processLap(hitTime, useFreeze) {
 }
 
 // --- USB Serial 通信 ---
+// --- USB Serial 通信 (フィルターなし全ポート表示版) ---
 async function connectUsbSerial() {
     const btn = document.getElementById('usbConnect');
 
@@ -296,15 +297,8 @@ async function connectUsbSerial() {
     }
 
     try {
-        usbPort = await serialObj.requestPort({
-            filters: [
-                { usbVendorId: 0x303A }, // ESP32-S2 / ESP32-S3 / ESP32-C3 (Native USB)
-                { usbVendorId: 0x10C4 }, // CP2102 / CP2104
-                { usbVendorId: 0x1A86 }, // CH340 / CH341
-                { usbVendorId: 0x0403 }, // FTDI
-                { usbVendorId: 0x2341 }  // Arduino / CDC
-            ]
-        });
+        // カッコ内を空にすることで、フィルターを外してすべてのポートをダイアログに表示
+        usbPort = await serialObj.requestPort();
 
         await usbPort.open({ baudRate: 115200 });
 
@@ -340,8 +334,9 @@ async function connectUsbSerial() {
         }
 
     } catch (e) {
-        if (e.name === 'NotFoundError') {
-            console.log("USBデバイス選択がキャンセルされました。");
+        // ポート選択ダイアログで「キャンセル」を押した場合や画面外をタップして閉じた場合
+        if (e.name === 'NotFoundError' || e.message.includes('No port selected')) {
+            console.log("USBデバイスの選択がキャンセルされました。");
         } else {
             console.error("USB Access Error:", e);
             alert("USB接続エラー: " + e.message);
