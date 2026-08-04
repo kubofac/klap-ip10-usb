@@ -327,13 +327,7 @@ async function connectUsbSerial() {
     }
     
     try {
-        usbPort = await serialApi.requestPort({
-            filters: [
-                { usbVendorId: 0x10C4 }, { usbVendorId: 0x1A86 },
-                { usbVendorId: 0x0403 }, { usbVendorId: 0x303A },
-                { usbVendorId: 0x2341 }, { usbVendorId: 0x2E8A }, { usbVendorId: 0x067B }
-            ]
-        });
+     usbPort = await serialApi.requestPort({});
         await usbPort.open({ baudRate: 115200 });
         btn.classList.add('active'); 
         btn.style.background = "var(--hrc-blue)"; 
