@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32-C3 WebUSB/Polyfill Monitor</title>
+  <!-- 1. WebSerial Polyfill ライブラリの読み込み (CDN) -->
+  <script src="https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f2f5; }
+    .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 12px; }
+    .val { font-size: 2em; font-weight: bold; color: #007bff; }
+    button { font-size: 1.1em; padding: 12px 20px; border-radius: 8px; border: none; background: #28a745; color: white; cursor: pointer; }
+    #status { margin: 10px 0; color: #666; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <h1>ESP32-C3 Polyfill Monitor</h1>
+  <button id="connectBtn">USBデバイスに接続</button>
+  <div id="status">未接続</div>
+
+  <div class="card">
+    <div>温度</div>
+    <div class="val"><span id="temp">--</span> °C</div>
+  </div>
+
+  <div class="card">
+    <div>湿度</div>
+    <div class="val"><span id="hum">--</span> %</div>
+  </div>
+
+  <div class="card">
+    <div>受信件数</div>
+    <div class="val"><span id="count">0</span></div>
+  </div>
+
+<script>
+  // 2. ブラウザ標準のserialがない場合、Polyfillのserialオブジェクトを使用する
+  const serial = navigator.serial || window.serial;
+
+  document.getElementById('connectBtn').addEventListener('click', async () => {
+    if (!serial) {
+      alert('WebUSB / Polyfill がサポートされていません');
+      return;
+    }
+
+    try {
+      // USBデバイス選択ダイアログを表示
+      const port = await serial.requestPort();
+      await port.open({ baudRate: 115200 });
+
+      document.getElementById('status').innerText = '接続成功';
+      document.getElementById('connectBtn').style.display = 'none';
+
+      // テキストデコーダーを設定してデータ読み取り
+      const textDecoder = new TextDecoderStream();
+      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+      const reader = textDecoder.readable.getReader();
+
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += value;
+        const lines = buffer.split('\n');
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('{') && line.endsWith('}')) {
+            try {
+              const data = JSON.parse(line);
+              if (data.temp !== undefined) document.getElementById('temp').innerText = data.temp;
+              if (data.hum !== undefined) document.getElementById('hum').innerText = data.hum;
+              if (data.count !== undefined) document.getElementById('count').innerText = data.count;
+            } catch (e) {
+              console.error('JSON解析エラー:', line);
+            }
+          }
+        }
+        buffer = lines[lines.length - 1];
+      }
+
+    } catch (error) {
+      console.error(error);
+      document.getElementById('status').innerText = '接続エラー: ' + error;
+    }
+  });
+</script>
+</body>
+</html>
