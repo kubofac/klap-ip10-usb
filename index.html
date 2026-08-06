@@ -3,91 +3,137 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32-C3 WebUSB/Polyfill Monitor</title>
-  <!-- 1. WebSerial Polyfill ライブラリの読み込み (CDN) -->
-  <script src="https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js"></script>
+  <title>WebSerial Polyfill - ESP32 接続テスト</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f2f5; }
-    .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 12px; }
-    .val { font-size: 2em; font-weight: bold; color: #007bff; }
-    button { font-size: 1.1em; padding: 12px 20px; border-radius: 8px; border: none; background: #28a745; color: white; cursor: pointer; }
-    #status { margin: 10px 0; color: #666; font-weight: bold; }
+    body { font-family: sans-serif; padding: 20px; line-height: 1.5; }
+    button { padding: 10px 16px; font-size: 16px; margin-right: 10px; cursor: pointer; }
+    #status { font-weight: bold; margin: 15px 0; padding: 8px; background-color: #f0f0f0; border-radius: 4px; }
+    #log { width: 100%; height: 300px; background-color: #1e1e1e; color: #00ff00; font-family: monospace; padding: 10px; box-sizing: border-box; overflow-y: scroll; white-space: pre-wrap; }
   </style>
+
+  <!-- Google公式 web-serial-polyfill (CDN) -->
+  <script src="https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js"></script>
 </head>
 <body>
 
-  <h1>ESP32-C3 Polyfill Monitor</h1>
-  <button id="connectBtn">USBデバイスに接続</button>
-  <div id="status">未接続</div>
-
-  <div class="card">
-    <div>温度</div>
-    <div class="val"><span id="temp">--</span> °C</div>
+  <h2>ESP32 WebUSB/WebSerial 接続テスト</h2>
+  
+  <div>
+    <button id="btnConnect">USB 接続 (usbstart)</button>
+    <button id="btnDisconnect" disabled>切断</button>
   </div>
 
-  <div class="card">
-    <div>湿度</div>
-    <div class="val"><span id="hum">--</span> %</div>
-  </div>
+  <div id="status">ステータス: 未接続</div>
 
-  <div class="card">
-    <div>受信件数</div>
-    <div class="val"><span id="count">0</span></div>
-  </div>
+  <h3>受信ログ</h3>
+  <div id="log"></div>
 
-<script>
-  // 2. ブラウザ標準のserialがない場合、Polyfillのserialオブジェクトを使用する
-  const serial = navigator.serial || window.serial;
+  <script>
+    let port = null;
+    let reader = null;
+    let keepReading = false;
 
-  document.getElementById('connectBtn').addEventListener('click', async () => {
-    if (!serial) {
-      alert('WebUSB / Polyfill がサポートされていません');
-      return;
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const statusDiv = document.getElementById('status');
+    const logDiv = document.getElementById('log');
+
+    // 画面ログ出力用関数
+    function log(msg) {
+      logDiv.textContent += msg + "\n";
+      logDiv.scrollTop = logDiv.scrollHeight;
     }
 
-    try {
-      // USBデバイス選択ダイアログを表示
-      const port = await serial.requestPort();
-      await port.open({ baudRate: 115200 });
+    // 接続処理
+    btnConnect.addEventListener('click', async () => {
+      try {
+        log("接続を開始します...");
 
-      document.getElementById('status').innerText = '接続成功';
-      document.getElementById('connectBtn').style.display = 'none';
+        // polyfillの取得（Web Serial API非対応ブラウザの場合はpolyfillのserialを使用）
+        const serialPolyfill = window.navigator.serial || window.serial;
 
-      // テキストデコーダーを設定してデータ読み取り
+        if (!serialPolyfill) {
+          alert("このブラウザは WebUSB / WebSerial に対応していません。");
+          return;
+        }
+
+        // ESP32でよく使われるUSBシリアル変換ICのベンダーID一覧
+        const filters = [
+          { usbVendorId: 0x10C4 }, // CP2102 / CP2104 (Silicon Labs)
+          { usbVendorId: 0x1A86 }, // CH340 / CH341 (Qinheng)
+          { usbVendorId: 0x0403 }, // FT232R / FT232H (FTDI)
+          { usbVendorId: 0x303A }, // ESP32-S2/S3 Native USB (Espressif)
+          { usbVendorId: 0x2341 }  // Arduino
+        ];
+
+        // 1. デバイス選択ダイアログ表示
+        port = await serialPolyfill.requestPort({ filters });
+        log("デバイスが選択されました。ポートを開いています...");
+
+        // 2. ポートのオープン（通信速度の設定）
+        // ※ESP32側のSerial.begin(115200)や9600に合わせて変更してください
+        await port.open({ baudRate: 115200 });
+
+        // 3. ESP32のリセット固定化を防ぐ（DTR / RTS 信号設定）
+        if (port.setSignals) {
+          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+        }
+
+        statusDiv.textContent = "ステータス: 接続成功";
+        statusDiv.style.backgroundColor = "#d4edda";
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+        log("接続に成功しました。データ受信を待機中...");
+
+        // 4. 受信ループ開始
+        keepReading = true;
+        readLoop();
+
+      } catch (err) {
+        log("[エラー] 接続に失敗しました: " + err.message);
+        statusDiv.textContent = "ステータス: 接続エラー";
+        statusDiv.style.backgroundColor = "#f8d7da";
+      }
+    });
+
+    // データ受信処理ループ
+    async function readLoop() {
       const textDecoder = new TextDecoderStream();
       const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-      const reader = textDecoder.readable.getReader();
+      reader = textDecoder.readable.getReader();
 
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += value;
-        const lines = buffer.split('\n');
-
-        for (let i = 0; i < lines.length - 1; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith('{') && line.endsWith('}')) {
-            try {
-              const data = JSON.parse(line);
-              if (data.temp !== undefined) document.getElementById('temp').innerText = data.temp;
-              if (data.hum !== undefined) document.getElementById('hum').innerText = data.hum;
-              if (data.count !== undefined) document.getElementById('count').innerText = data.count;
-            } catch (e) {
-              console.error('JSON解析エラー:', line);
-            }
+      try {
+        while (keepReading) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (value) {
+            log(value);
           }
         }
-        buffer = lines[lines.length - 1];
+      } catch (err) {
+        log("[エラー] 受信エラー: " + err.message);
+      } finally {
+        reader.releaseLock();
       }
-
-    } catch (error) {
-      console.error(error);
-      document.getElementById('status').innerText = '接続エラー: ' + error;
     }
-  });
-</script>
+
+    // 切断処理
+    btnDisconnect.addEventListener('click', async () => {
+      keepReading = false;
+      if (reader) {
+        await reader.cancel();
+      }
+      if (port) {
+        await port.close();
+      }
+      statusDiv.textContent = "ステータス: 切断済み";
+      statusDiv.style.backgroundColor = "#f0f0f0";
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+      log("切断しました。");
+    });
+  </script>
 </body>
 </html>
