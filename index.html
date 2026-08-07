@@ -1,175 +1,848 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebSerial Polyfill テスト</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      margin: 20px;
-      line-height: 1.6;
-    }
-    .controls {
-      margin-bottom: 15px;
-    }
-    button {
-      padding: 10px 18px;
-      font-size: 16px;
-      cursor: pointer;
-      margin-right: 10px;
-    }
-    #status {
-      font-weight: bold;
-      padding: 8px 12px;
-      background-color: #eee;
-      border-radius: 4px;
-      display: inline-block;
-      margin-bottom: 15px;
-    }
-    #log {
-      width: 100%;
-      height: 320px;
-      background-color: #1e1e1e;
-      color: #00ff00;
-      font-family: monospace;
-      padding: 10px;
-      box-sizing: border-box;
-      overflow-y: scroll;
-      white-space: pre-wrap;
-      border-radius: 4px;
-    }
-  </style>
+<meta charset="UTF-8">
 
-  <!-- 1. 正確な CDN パスで web-serial-polyfill を読み込み -->
-  <script src="https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js"></script>
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<meta name="theme-color" content="#111111">
+
+<title>Kfactory ESP32 USB RPM Test</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        padding: 20px;
+        background: #111;
+        color: #fff;
+        font-family:
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif;
+    }
+
+    .container {
+        max-width: 600px;
+        margin: auto;
+    }
+
+    h1 {
+        text-align: center;
+        font-size: 24px;
+        margin-bottom: 5px;
+    }
+
+    .subtitle {
+        text-align: center;
+        color: #aaa;
+        margin-bottom: 25px;
+    }
+
+    .card {
+        background: #1c1c1c;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 15px;
+    }
+
+    .status-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #333;
+    }
+
+    .status-row:last-child {
+        border-bottom: none;
+    }
+
+    .ok {
+        color: #00e676;
+        font-weight: bold;
+    }
+
+    .ng {
+        color: #ff5252;
+        font-weight: bold;
+    }
+
+    .warning {
+        color: #ffca28;
+        font-weight: bold;
+    }
+
+    button {
+        width: 100%;
+        padding: 16px;
+        border: none;
+        border-radius: 10px;
+        font-size: 18px;
+        font-weight: bold;
+        background: #1976d2;
+        color: white;
+        cursor: pointer;
+        margin-top: 8px;
+    }
+
+    button:active {
+        transform: scale(0.98);
+    }
+
+    button:disabled {
+        background: #555;
+    }
+
+    .disconnect {
+        background: #b71c1c;
+    }
+
+    .rpm-box {
+        text-align: center;
+        padding: 25px 10px;
+    }
+
+    .rpm-value {
+        font-size: 72px;
+        font-weight: bold;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .rpm-unit {
+        font-size: 22px;
+        color: #aaa;
+        margin-top: 10px;
+    }
+
+    .connection {
+        text-align: center;
+        font-size: 18px;
+        padding: 10px;
+    }
+
+    .connected {
+        color: #00e676;
+    }
+
+    .disconnected {
+        color: #ff5252;
+    }
+
+    #lastData {
+        font-family: monospace;
+        word-break: break-all;
+        color: #00e676;
+    }
+
+    #log {
+        height: 180px;
+        overflow-y: auto;
+        background: #000;
+        border-radius: 8px;
+        padding: 10px;
+        font-family: monospace;
+        font-size: 13px;
+        white-space: pre-wrap;
+    }
+
+    .notice {
+        font-size: 13px;
+        line-height: 1.6;
+        color: #bbb;
+    }
+</style>
 </head>
+
 <body>
 
-  <h2>WebUSB / WebSerial 接続テスト</h2>
+<div class="container">
 
-  <div class="controls">
-    <button id="btnConnect">USB接続開始</button>
-    <button id="btnDisconnect" disabled>切断</button>
-  </div>
+    <h1>Kfactory</h1>
 
-  <div id="status">ステータス: 未接続</div>
+    <div class="subtitle">
+        ESP32-C3 USB RPM TEST
+    </div>
 
-  <h3>受信ログ:</h3>
-  <div id="log"></div>
+    <!-- Browser status -->
+    <div class="card">
 
-  <script>
-    let activePort = null;
-    let activeReader = null;
+        <div class="status-row">
+            <span>HTTPS</span>
+            <span id="httpsStatus">確認中</span>
+        </div>
 
-    const btnConnect = document.getElementById('btnConnect');
-    const btnDisconnect = document.getElementById('btnDisconnect');
-    const statusDiv = document.getElementById('status');
-    const logDiv = document.getElementById('log');
+        <div class="status-row">
+            <span>Web Serial</span>
+            <span id="serialStatus">確認中</span>
+        </div>
 
-    // ログ画面への追加表示
-    function printLog(msg) {
-      logDiv.textContent += msg + "\n";
-      logDiv.scrollTop = logDiv.scrollHeight;
+        <div class="status-row">
+            <span>WebUSB</span>
+            <span id="usbStatus">確認中</span>
+        </div>
+
+    </div>
+
+
+    <!-- Connection -->
+    <div class="card">
+
+        <div id="connectionStatus"
+             class="connection disconnected">
+
+            USB未接続
+
+        </div>
+
+        <button id="connectButton">
+            ESP32 USB接続
+        </button>
+
+        <button id="disconnectButton"
+                class="disconnect"
+                disabled>
+
+            USB切断
+
+        </button>
+
+    </div>
+
+
+    <!-- RPM -->
+    <div class="card rpm-box">
+
+        <div id="rpm"
+             class="rpm-value">
+
+            ----
+
+        </div>
+
+        <div class="rpm-unit">
+            RPM
+        </div>
+
+    </div>
+
+
+    <!-- Last data -->
+    <div class="card">
+
+        <div>
+            最終受信データ
+        </div>
+
+        <div id="lastData">
+            ----
+        </div>
+
+        <div style="margin-top:10px;">
+            最終受信時刻
+        </div>
+
+        <div id="lastTime">
+            ----
+        </div>
+
+    </div>
+
+
+    <!-- Log -->
+    <div class="card">
+
+        <div style="margin-bottom:8px;">
+            通信ログ
+        </div>
+
+        <div id="log"></div>
+
+    </div>
+
+
+    <!-- Information -->
+    <div class="card notice">
+
+        <strong>ESP32側の送信形式</strong><br><br>
+
+        このテストページでは、ESP32から以下の形式で送信されたデータを受信します。
+
+        <br><br>
+
+        <code>RPM=8500</code>
+
+        <br><br>
+
+        改行コードは LF または CRLF に対応しています。
+
+        <br><br>
+
+        ESP32-C3ではUSB CDCを有効にしてください。
+
+    </div>
+
+</div>
+
+
+<script>
+
+/* =========================================================
+   Kfactory ESP32 USB RPM TEST
+   ========================================================= */
+
+
+/* ---------------------------------------------------------
+   Elements
+--------------------------------------------------------- */
+
+const rpmElement =
+    document.getElementById("rpm");
+
+const lastDataElement =
+    document.getElementById("lastData");
+
+const lastTimeElement =
+    document.getElementById("lastTime");
+
+const logElement =
+    document.getElementById("log");
+
+const connectionStatus =
+    document.getElementById("connectionStatus");
+
+const connectButton =
+    document.getElementById("connectButton");
+
+const disconnectButton =
+    document.getElementById("disconnectButton");
+
+
+/* ---------------------------------------------------------
+   Variables
+--------------------------------------------------------- */
+
+let port = null;
+
+let reader = null;
+
+let readableStreamClosed = null;
+
+let keepReading = false;
+
+let receiveBuffer = "";
+
+
+/* ---------------------------------------------------------
+   Logging
+--------------------------------------------------------- */
+
+function log(message) {
+
+    const now =
+        new Date().toLocaleTimeString();
+
+    logElement.textContent +=
+        "[" + now + "] " + message + "\n";
+
+    logElement.scrollTop =
+        logElement.scrollHeight;
+}
+
+
+/* ---------------------------------------------------------
+   Browser status
+--------------------------------------------------------- */
+
+function checkBrowser() {
+
+    /*
+     * HTTPS
+     */
+
+    if (window.isSecureContext) {
+
+        document.getElementById(
+            "httpsStatus"
+        ).textContent = "OK";
+
+        document.getElementById(
+            "httpsStatus"
+        ).className = "ok";
+
+    } else {
+
+        document.getElementById(
+            "httpsStatus"
+        ).textContent = "NG";
+
+        document.getElementById(
+            "httpsStatus"
+        ).className = "ng";
+
     }
 
-    // 1. デバイスへの接続要求＆初期化
-    async function connectArduino() {
-      try {
-        printLog("接続処理を開始します...");
 
-        // ブラウザ標準の navigator.serial または Polyfill の serial を自動選択
-        const serialApi = window.navigator.serial || window.serial;
+    /*
+     * Web Serial
+     */
 
-        if (!serialApi) {
-          alert("このブラウザ環境では WebUSB / WebSerial がサポートされていません。");
-          return;
-        }
+    if ("serial" in navigator) {
 
-        // ダイアログで検出対象にする Vendor ID 一覧
-        const filters = [
-          { usbVendorId: 0x2341 }, // Arduino
-          { usbVendorId: 0x1A86 }, // CH340 / CH341
-          { usbVendorId: 0x10C4 }, // CP2102 / Silicon Labs
-          { usbVendorId: 0x303A }, // ESP32-S2/S3 Native USB
-          { usbVendorId: 0x0403 }  // FTDI
-        ];
+        document.getElementById(
+            "serialStatus"
+        ).textContent = "対応";
 
-        // デバイス選択ダイアログを表示
-        activePort = await serialApi.requestPort({ filters });
-        printLog("デバイスが選択されました。ポートを開いています...");
+        document.getElementById(
+            "serialStatus"
+        ).className = "ok";
 
-        // シリアルポートを開く（ボーレートは接続機器に合わせて変更してください）
-        await activePort.open({ baudRate: 9600 });
+    } else {
 
-        // ESP32/Arduino のリセット固定化を防ぐための DTR/RTS 信号制御
-        if (activePort.setSignals) {
-          await activePort.setSignals({ dataTerminalReady: false, requestToSend: false });
-        }
+        document.getElementById(
+            "serialStatus"
+        ).textContent = "非対応";
 
-        statusDiv.textContent = "ステータス: 接続完了";
-        statusDiv.style.backgroundColor = "#d4edda";
-        btnConnect.disabled = true;
-        btnDisconnect.disabled = false;
+        document.getElementById(
+            "serialStatus"
+        ).className = "ng";
 
-        printLog("接続成功！データ受信を開始します...");
-
-        // 受信ループを実行
-        readLoop(activePort);
-
-      } catch (error) {
-        if (error.name === 'NotFoundError') {
-          printLog("[警告] ユーザーによって選択がキャンセルされたか、デバイスが見つかりませんでした。");
-        } else {
-          printLog("[エラー] 接続エラー: " + error.message);
-          console.error(error);
-        }
-        statusDiv.textContent = "ステータス: 接続失敗";
-        statusDiv.style.backgroundColor = "#f8d7da";
-      }
     }
 
-    // 2. データ受信処理ループ
-    async function readLoop(port) {
-      while (port && port.readable) {
-        const textDecoder = new TextDecoderStream();
-        const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
-        activeReader = textDecoder.readable.getReader();
+
+    /*
+     * WebUSB
+     */
+
+    if ("usb" in navigator) {
+
+        document.getElementById(
+            "usbStatus"
+        ).textContent = "対応";
+
+        document.getElementById(
+            "usbStatus"
+        ).className = "ok";
+
+    } else {
+
+        document.getElementById(
+            "usbStatus"
+        ).textContent = "非対応";
+
+        document.getElementById(
+            "usbStatus"
+        ).className = "ng";
+
+    }
+
+}
+
+
+/* ---------------------------------------------------------
+   Connection UI
+--------------------------------------------------------- */
+
+function setConnected(state) {
+
+    if (state) {
+
+        connectionStatus.textContent =
+            "USB接続中";
+
+        connectionStatus.className =
+            "connection connected";
+
+        connectButton.disabled = true;
+
+        disconnectButton.disabled = false;
+
+    } else {
+
+        connectionStatus.textContent =
+            "USB未接続";
+
+        connectionStatus.className =
+            "connection disconnected";
+
+        connectButton.disabled = false;
+
+        disconnectButton.disabled = true;
+
+    }
+
+}
+
+
+/* ---------------------------------------------------------
+   Connect
+--------------------------------------------------------- */
+
+async function connectSerial() {
+
+    if (!("serial" in navigator)) {
+
+        alert(
+            "このブラウザはWeb Serial APIに対応していません。"
+        );
+
+        return;
+    }
+
+
+    try {
+
+        log("USB接続を開始");
+
+
+        /*
+         * USB device selection
+         */
+
+        port =
+            await navigator.serial.requestPort();
+
+
+        log("USBデバイスを選択しました");
+
+
+        /*
+         * Open
+         *
+         * ESP32 USB CDCでは実質的に
+         * baudRateは通信速度の設定というより
+         * Serial APIのopen条件として使用します。
+         */
+
+        await port.open({
+            baudRate: 115200
+        });
+
+
+        log("USBポートをオープン");
+
+
+        setConnected(true);
+
+
+        keepReading = true;
+
+
+        /*
+         * Receive loop
+         */
+
+        readLoop();
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        log(
+            "接続エラー: " +
+            error.message
+        );
+
+        setConnected(false);
+
+    }
+
+}
+
+
+/* ---------------------------------------------------------
+   Read loop
+--------------------------------------------------------- */
+
+async function readLoop() {
+
+    if (!port) {
+        return;
+    }
+
+
+    while (
+        port.readable &&
+        keepReading
+    ) {
+
+        reader =
+            port.readable.getReader();
+
 
         try {
-          while (true) {
-            const { value, done } = await activeReader.read();
-            if (done) break;
-            if (value) {
-              printLog(value);
+
+            while (true) {
+
+                const {
+                    value,
+                    done
+                } = await reader.read();
+
+
+                if (done) {
+
+                    break;
+
+                }
+
+
+                if (value) {
+
+                    receiveData(value);
+
+                }
+
             }
-          }
+
         } catch (error) {
-          printLog("[エラー] 読み込みエラー: " + error.message);
+
+            console.error(error);
+
+            log(
+                "受信エラー: " +
+                error.message
+            );
+
         } finally {
-          activeReader.releaseLock();
+
+            reader.releaseLock();
+
         }
-      }
+
     }
 
-    // 切断処理
-    async function disconnect() {
-      if (activeReader) {
-        await activeReader.cancel();
-      }
-      if (activePort) {
-        await activePort.close();
-      }
-      statusDiv.textContent = "ステータス: 切断済み";
-      statusDiv.style.backgroundColor = "#eee";
-      btnConnect.disabled = false;
-      btnDisconnect.disabled = true;
-      printLog("切断しました。");
+}
+
+
+/* ---------------------------------------------------------
+   Receive data
+--------------------------------------------------------- */
+
+const textDecoder =
+    new TextDecoder();
+
+
+function receiveData(value) {
+
+    const text =
+        textDecoder.decode(value);
+
+
+    receiveBuffer += text;
+
+
+    /*
+     * LFで分割
+     */
+
+    const lines =
+        receiveBuffer.split("\n");
+
+
+    /*
+     * 最後は未完成データとして残す
+     */
+
+    receiveBuffer =
+        lines.pop();
+
+
+    for (const line of lines) {
+
+        processLine(
+            line.trim()
+        );
+
     }
 
-    // イベントリスナーのセット
-    btnConnect.addEventListener('click', connectArduino);
-    btnDisconnect.addEventListener('click', disconnect);
-  </script>
+}
+
+
+/* ---------------------------------------------------------
+   Process line
+--------------------------------------------------------- */
+
+function processLine(line) {
+
+    if (!line) {
+        return;
+    }
+
+
+    log("RX: " + line);
+
+
+    /*
+     * RPM=8500
+     */
+
+    if (
+        line.startsWith("RPM=")
+    ) {
+
+        const value =
+            line.substring(4);
+
+
+        const rpm =
+            Number(value);
+
+
+        if (
+            Number.isFinite(rpm)
+        ) {
+
+            rpmElement.textContent =
+                Math.round(rpm).toLocaleString();
+
+
+            lastDataElement.textContent =
+                line;
+
+
+            lastTimeElement.textContent =
+                new Date().toLocaleTimeString(
+                    "ja-JP",
+                    {
+                        hour12: false,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit"
+                    }
+                );
+
+        }
+
+    }
+
+
+    /*
+     * STARTメッセージ
+     */
+
+    if (
+        line ===
+        "KLAP_USB_TEST,START"
+    ) {
+
+        log(
+            "ESP32テストプログラムを検出"
+        );
+
+    }
+
+}
+
+
+/* ---------------------------------------------------------
+   Disconnect
+--------------------------------------------------------- */
+
+async function disconnectSerial() {
+
+    keepReading = false;
+
+
+    try {
+
+        if (reader) {
+
+            await reader.cancel();
+
+        }
+
+    } catch (error) {
+
+        console.log(error);
+
+    }
+
+
+    try {
+
+        if (port) {
+
+            await port.close();
+
+        }
+
+    } catch (error) {
+
+        console.log(error);
+
+    }
+
+
+    reader = null;
+
+    port = null;
+
+    receiveBuffer = "";
+
+    setConnected(false);
+
+    log("USB切断");
+
+}
+
+
+/* ---------------------------------------------------------
+   Buttons
+--------------------------------------------------------- */
+
+connectButton.addEventListener(
+    "click",
+    connectSerial
+);
+
+
+disconnectButton.addEventListener(
+    "click",
+    disconnectSerial
+);
+
+
+/* ---------------------------------------------------------
+   USB disconnect event
+--------------------------------------------------------- */
+
+if ("serial" in navigator) {
+
+    navigator.serial.addEventListener(
+        "disconnect",
+        event => {
+
+            log(
+                "USBデバイスが切断されました"
+            );
+
+            disconnectSerial();
+
+        }
+    );
+
+}
+
+
+/* ---------------------------------------------------------
+   Start
+--------------------------------------------------------- */
+
+checkBrowser();
+
+setConnected(false);
+
+log("Kfactory USB TEST 起動");
+
+</script>
+
 </body>
 </html>
+
